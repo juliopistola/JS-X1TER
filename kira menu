@@ -1,0 +1,4128 @@
+-- KIRA MENU V1 | inicializacao com diagnostico de erros
+local __kira_ok,__kira_err=xpcall(function()
+-- KIRA MENU | BLACK & PURPLE PREMIUM | desenvolvido por JS
+-- ATUALIZACAO ESP FLUIDO: projecao apos a camera, cache dos rigs R6/R15,
+-- raycasts distribuidos por frame e limpeza de overlays preservada.
+-- A execucao real depende dos dados replicados pelo jogo; nao ha garantia
+-- de funcionamento em todos os servidores ou executores.
+-- Esta versao adiciona leitura REAL do inventario da propria conta.
+-- AUTOSAVE: toggles, sliders, ESP, hitbox e cores/linha pelo UserId; ao destruir
+-- e executar novamente, recarrega o estado. Entre reinicios do jogo exige
+-- suporte a readfile/writefile; sem isso usa o cache apenas da sessao.
+-- ESP: um unico traco fino para cada segmento, sem contorno/preenchimento.
+-- Nao inclui bypass anticheat, driver Ring 0, HWID spoofer, silent aim,
+-- evasao de deteccao, logs remotos ou servicos cloud inexistentes.
+-- Adaptado da base JS MENU BLACK PREMIUM 3.1, preservando os recursos locais.
+-- Recursos dependentes do servidor nao possuem garantia de replicacao.
+-- JS MENU | CONFIGURACOES COMPLETAS + CONTADOR PRETO (SEM AUXILIO DE MIRA)
+-- Esta e a interface original JS MENU. Nao instala um segundo painel.
+-- Detector FOV e invisivel. Nenhuma alteracao de acerto/bala/servidor.
+-- JS MENU | BLACK PREMIUM CINEMATIC | efeitos V2 restaurados; ajustes de compatibilidade e escala.
+-- JS MENU | UPDATE 01/11 | LOGO HD / BLACK PREMIUM INTERFACE
+-- JS X1TER | key local vinculada a um UserId.
+-- Esta verificacao no cliente pode ser alterada por terceiros;
+-- para licencas comerciais seguras, use validacao no servidor.
+local TESTAR_TELA_KEY = false
+local DISCORD_URL = 'https://discord.gg/zWdQy9bUc'
+-- Logo fantasma roxo do KIRA MENU (arquivo incluido no pacote).
+-- O executor pode carrega-la do workspace via getcustomasset/getsynasset.
+-- Alternativa: envie o PNG ao Roblox Creator Hub e configure o ID aprovado.
+-- Imagens do computador nao funcionam como rbxassetid sem upload.
+local LOGO_ASSET_ID = '140380401077061' -- ID da imagem enviada pelo JS
+local LOGO_LOCAL_FILE = 'KIRA_FANTASMA.png' -- PNG no workspace do executor
+local function logoSource()
+ if LOGO_ASSET_ID ~= '0' and LOGO_ASSET_ID ~= '' then
+  return 'rbxassetid://'..tostring(LOGO_ASSET_ID)
+ end
+ if type(getcustomasset)=='function' then
+  local success,asset=pcall(getcustomasset,LOGO_LOCAL_FILE)
+  if success and type(asset)=='string' then return asset end
+ end
+ if type(getsynasset)=='function' then
+  local success,asset=pcall(getsynasset,LOGO_LOCAL_FILE)
+  if success and type(asset)=='string' then return asset end
+ end
+ return nil
+end
+local LOGO_SOURCE = logoSource()
+local PANEL_NAME = 'KIRA MENU'
+local PANEL_NAME_FALLBACK = 'KIRA MENU'
+
+local Players = game:GetService('Players')
+local UIS = game:GetService('UserInputService')
+local TS = game:GetService('TweenService')
+local Run = game:GetService('RunService')
+local Lighting = game:GetService('Lighting')
+local LocalPlayer = Players.LocalPlayer
+local HttpService = game:GetService('HttpService')
+
+-- ===== KEY LOCAL RESTRITA A UMA CONTA =====
+-- Nao realiza chamadas HTTP ao Google Apps Script.
+-- Atencao: scripts locais podem ser alterados por quem recebe o arquivo.
+local AUTHORIZED_USER_ID = 7959202313
+local AUTHORIZED_SECONDARY_USER_ID = 0 -- substitua 0 pelo UserId de sua conta secundaria
+local ACCESS_KEY = 'JS311014'
+local NEVER_EXPIRES = 32503680000 -- data distante, usada somente para compatibilidade visual
+local ACCESS_FILE = 'JS_X1TER_KEY_'..tostring(LocalPlayer.UserId)..'.json'
+local licenseCache = (_G or {})
+pcall(function()
+ if type(getgenv)=='function' then
+  local env=getgenv()
+  if type(env)=='table' then licenseCache=env end
+ end
+end)
+local cacheKey='JS_X1TER_KEY_'..tostring(LocalPlayer.UserId)
+local accessExpiresAt=0
+local accessIsOwner=false
+local savedKey=''
+local function serverRequest(route,key)
+ local normalized=tostring(key or ''):match('^%s*(.-)%s*$'):upper()
+ if normalized~=ACCESS_KEY then
+  return nil,'KEY INVALIDA, TENTE NOVAMENTE'
+ end
+ if LocalPlayer.UserId~=AUTHORIZED_USER_ID and LocalPlayer.UserId~=AUTHORIZED_SECONDARY_USER_ID then
+  return nil,'KEY RESTRITA, TENTE NOVAMENTE'
+ end
+ return {ok=true,expiresAt=NEVER_EXPIRES,owner=false},nil
+end
+-- Sempre iniciar como primeira utilizacao: nao reutilizar key de execucoes anteriores.
+local function carregarAcesso()
+ accessExpiresAt=0
+ accessIsOwner=false
+ savedKey=''
+ return false
+end
+local function salvarAcesso(key,expiresAt,owner)
+ -- Acesso valido apenas nesta execucao. Nao grava em arquivo nem no ambiente global.
+ savedKey=key
+ accessExpiresAt=expiresAt
+ accessIsOwner=false
+end
+local acessoJaReconhecido=true
+accessExpiresAt=32503680000
+local Camera = workspace.CurrentCamera
+local parent = LocalPlayer:WaitForChild('PlayerGui')
+pcall(function() if gethui then parent = gethui() or parent end end)
+
+-- Destroi a instancia anterior e sinaliza para loops e conexoes pararem.
+local previousVelosoCleanup=_G.VELOSO_DESTROY
+if type(previousVelosoCleanup)=='function' then pcall(previousVelosoCleanup) end
+if type(_G.CHAT_MENU_DESTROY)=='function' and _G.CHAT_MENU_DESTROY~=previousVelosoCleanup then
+ pcall(_G.CHAT_MENU_DESTROY)
+end
+for _,child in ipairs(parent:GetChildren()) do
+ if child:IsA('ScreenGui') and (child.Name:match('^VELOSO_') or child.Name:match('^CHAT_MENU') or child.Name:match('^CHAY_MENU') or child.Name:match('^JS_X1TER_MENU')) then
+  child:Destroy()
+ end
+end
+
+local COLOR = {
+ bg = Color3.fromRGB(0,0,0),
+ side = Color3.fromRGB(2,2,2),
+ button = Color3.fromRGB(3,3,3),
+ white = Color3.fromRGB(246,246,248),
+ gray = Color3.fromRGB(147,147,150),
+ green = Color3.fromRGB(100,245,160),
+ red = Color3.fromRGB(252,98,111)
+}
+local alive=true
+local conn={}
+local uiObjects={}
+local settings={
+ speed=false, speedValue=32, jump=false, jumpValue=85, fling=false, flingSpeed=180, spin=false, spinSpeed=360,
+ infinity=false, noclip=false, fly=false, flySpeed=45, flySmooth=65, flyUp=false, flyDown=false,
+ hitboxFovVisible=false,hitboxUseFov=false,hitboxFovRadius=145,hitboxFovThickness=2,hitboxFovRGB=false,
+ hitboxFovColor=Color3.fromRGB(255,255,255),hitboxRGB=false,
+ customGravity=false, gravity=110, ghost=false,
+ espBox=false, espLine=false, espSkeleton=false, espName=false,
+ espLife=false, espDistance=false, espHighlight=false, espRGB=false,
+ espOutline=false, espLineSource='Centro', espMax=5000, espJoints=false,
+ aim=false, aimRadius=280, aimSmooth=4, aimPart='Head', aimWalls=false,
+ aimTeam=false, showFOV=false, fovColorIndex=1, cameraFov=70, crosshair=false,
+ clock=14, fullBright=false
+}
+-- Preferencias automaticas por UserId. Apenas estados de controles do painel;
+-- nunca salva chaves, dados privados ou informacoes de outros jogadores.
+-- Um unico campo de settings evita estourar o limite de variaveis locais do Lua.
+settings.pref={}
+-- Guarda os tamanhos reais do rig para o ESP nao acompanhar a ampliacao do hitbox.
+settings.espNaturalSizes=setmetatable({},{__mode='k'})
+do
+ local pref=settings.pref
+ local file='KIRA_PREFS_'..tostring(LocalPlayer.UserId)..'.json'
+ local globalKey='KIRA_PREFS_'..tostring(LocalPlayer.UserId)
+ local saved,current,handlers,order,counters={},{},{},{},{}
+ local ready,saveQueued=false,false
+ local globals=_G
+ pcall(function() if type(getgenv)=='function' then globals=getgenv() end end)
+ if type(globals)=='table' and type(globals[globalKey])=='table' then saved=globals[globalKey] end
+ if type(readfile)=='function' then
+  local ok,decoded=pcall(function() return HttpService:JSONDecode(readfile(file)) end)
+  if ok and type(decoded)=='table' and type(decoded.controls)=='table' then
+   saved=decoded.controls
+  end
+ end
+ function pref.start(page,name,initial)
+  local base=tostring(page.Name)..'|'..tostring(name)
+  counters[base]=(counters[base] or 0)+1
+  local key=base..'#'..counters[base]
+  local value=saved[key]
+  if type(value)~=type(initial) then value=initial end
+  current[key]=value
+  return key,value
+ end
+ function pref.save()
+  local snapshot={}
+  for key,value in pairs(current) do
+   if type(value)=='boolean' or type(value)=='number' or type(value)=='string' then snapshot[key]=value end
+  end
+  local env=_G
+  pcall(function() if type(getgenv)=='function' then env=getgenv() end end)
+  if type(env)=='table' then env[globalKey]=snapshot end
+  if type(writefile)=='function' then
+   pcall(function() writefile(file,HttpService:JSONEncode({version=1,userId=LocalPlayer.UserId,controls=snapshot})) end)
+  end
+ end
+ function pref.set(key,value)
+  current[key]=value
+  if not ready or saveQueued then return end
+  -- Um unico agendamento por lote, mesmo arrastando o slider centenas de vezes.
+  saveQueued=true
+  task.delay(.8,function()
+   saveQueued=false
+   if ready then pref.save() end
+  end)
+ end
+ function pref.register(key,fn)
+  handlers[key]=fn
+  table.insert(order,key)
+ end
+ function pref.restore()
+  for _,key in ipairs(order) do
+   if saved[key]~=nil and handlers[key] then pcall(handlers[key]) end
+  end
+  ready=true
+  pref.save()
+ end
+ function pref.freezeAndSave()
+  if ready then pref.save() end
+  ready=false
+  saveQueued=false
+ end
+end
+local originals={gravity=workspace.Gravity, clock=Lighting.ClockTime, brightness=Lighting.Brightness, ambient=Lighting.Ambient, cameraFOV=(Camera and Camera.FieldOfView or 70), cameraMode=LocalPlayer.CameraMode}
+local partCanCollide={}
+settings.refreshNoclip=function() end -- definido apos os controles
+settings.clearNoclip=function() end -- restaura as pecas do personagem
+local partTransparency={}
+local espEntries={}
+-- O ESP e desenhado depois da atualizacao da camera para evitar atraso de
+-- um frame ao girar a visao (causa comum do efeito de ESP "travado").
+local espRenderBindingName='VELOSO_ESP_POST_CAMERA_'..tostring(LocalPlayer.UserId)
+local flyButtons={}
+local lastPos=nil
+local buttons={}
+local keybinds={menu=Enum.KeyCode.RightShift,fly=nil,invisible=nil}
+-- Salva SOMENTE a tecla de abrir/fechar por UserId do Roblox.
+-- Persiste entre execucoes quando o executor oferece readfile/writefile.
+local hotkeyFile='KIRA_ATALHO_'..tostring(LocalPlayer.UserId)..'.json'
+local function loadMenuHotkey()
+ if type(readfile)~='function' then return end
+ local ok,data=pcall(function()
+  if type(isfile)=='function' and not isfile(hotkeyFile) then return nil end
+  return HttpService:JSONDecode(readfile(hotkeyFile))
+ end)
+ if not ok or type(data)~='table' or type(data.menu)~='string' then return end
+ local okKey,code=pcall(function() return Enum.KeyCode[data.menu] end)
+ if okKey and code and code~=Enum.KeyCode.Unknown and code~=Enum.KeyCode.Escape then
+  keybinds.menu=code
+ end
+end
+local function saveMenuHotkey()
+ if type(writefile)~='function' then return false end
+ local ok=pcall(function()
+  writefile(hotkeyFile,HttpService:JSONEncode({menu=keybinds.menu.Name}))
+ end)
+ return ok
+end
+-- No modo PVP a tecla padrao e fixa em F1.
+local invisOn=false
+local menuOpen=false
+local savePanelLayout=function() end
+local updateKeyPanel=function() end
+local flyScrollBoost=0
+local flyVelocity,flyGyro,flyRoot
+local flyOriginalPlatformStand=nil
+local flyOriginalAutoRotate=nil
+local flyVelocitySmooth=Vector3.zero
+local flyLastTime=0
+local function stopFlyPhysics()
+ if flyVelocity then pcall(function() flyVelocity:Destroy() end) end
+ if flyGyro then pcall(function() flyGyro:Destroy() end) end
+ flyVelocity=nil;flyGyro=nil;flyRoot=nil
+ local h=LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass('Humanoid')
+ if h then
+  if flyOriginalPlatformStand~=nil then h.PlatformStand=flyOriginalPlatformStand end
+  if flyOriginalAutoRotate~=nil then h.AutoRotate=flyOriginalAutoRotate end
+ end
+ flyOriginalPlatformStand=nil
+ flyOriginalAutoRotate=nil
+ flyVelocitySmooth=Vector3.zero
+end
+
+
+
+local function make(cls,props,parentObj)
+ local obj=Instance.new(cls)
+ for k,v in pairs(props) do obj[k]=v end
+ obj.Parent=parentObj
+ return obj
+end
+local function listen(signal,callback)
+ local c=signal:Connect(callback)
+ table.insert(conn,c)
+ return c
+end
+local function rounded(obj,px) make('UICorner',{CornerRadius=UDim.new(0,px or 9)},obj) end
+local function border(obj)
+ make('UIStroke',{Thickness=1,Color=COLOR.white,Transparency=.83},obj)
+end
+local function text(p,value,size,position,dimensions)
+ return make('TextLabel',{
+  BackgroundTransparency=1,Text=value,Font=Enum.Font.GothamBold,TextSize=size,
+  TextColor3=COLOR.white,TextWrapped=true,Position=position,Size=dimensions
+ },p)
+end
+local function tween(obj,time,props)
+ local tw=TS:Create(obj,TweenInfo.new(time,Enum.EasingStyle.Quint,Enum.EasingDirection.Out),props)
+ tw:Play();return tw
+end
+local function crown(p,pos,s)
+ s=s or 1
+ local holder=make('Frame',{Name='JS_CoroaPremium',Position=pos,Size=UDim2.fromOffset(72*s,48*s),BackgroundTransparency=1,BorderSizePixel=0},p)
+ local function strokeLine(x1,y1,x2,y2,thickness,alpha)
+  local dx,dy=x2-x1,y2-y1
+  local bar=make('Frame',{
+   AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromOffset((x1+x2)*s/2,(y1+y2)*s/2),
+   Size=UDim2.fromOffset(math.sqrt(dx*dx+dy*dy)*s,thickness*s),
+   Rotation=math.deg(math.atan2(dy,dx)),BackgroundColor3=Color3.fromRGB(250,250,255),
+   BackgroundTransparency=alpha,BorderSizePixel=0
+  },holder)
+  return bar
+ end
+ local outline={{5,13,10,34},{10,34,62,34},{62,34,67,13},{5,13,23,25},
+ {23,25,36,4},{36,4,49,25},{49,25,67,13},{10,40,62,40}}
+ for _,v in ipairs(outline) do
+  strokeLine(v[1],v[2],v[3],v[4],6,.87)
+  strokeLine(v[1],v[2],v[3],v[4],2.2,0)
+ end
+ for _,v in ipairs({{5,13},{36,4},{67,13}}) do
+  local jewel=make('Frame',{AnchorPoint=Vector2.new(.5,.5),
+   Position=UDim2.fromOffset(v[1]*s,v[2]*s),Size=UDim2.fromOffset(5*s,5*s),
+   Rotation=45,BackgroundColor3=Color3.fromRGB(255,255,255),BorderSizePixel=0},holder)
+ end
+ strokeLine(18,37,54,37,.8,.3)
+ return holder
+end
+
+local function brandLogo(p,pos,s)
+ s=s or 1
+ if not LOGO_SOURCE then
+  return crown(p,pos,s)
+ end
+ local logo=make('ImageLabel',{
+  Name='JSX1TERLogo',
+  Position=pos,
+  Size=UDim2.fromOffset(72*s,43*s),
+  BackgroundTransparency=1,
+  BorderSizePixel=0,
+  Image=LOGO_SOURCE,
+  ScaleType=Enum.ScaleType.Fit
+ },p)
+ return logo
+end
+local gui=make('ScreenGui',{
+ Name='KIRA_MENU',IgnoreGuiInset=true,ResetOnSpawn=false,DisplayOrder=999,
+ ZIndexBehavior=Enum.ZIndexBehavior.Sibling
+},parent)
+local function center(frame,w,h)
+ local cam=workspace.CurrentCamera
+ local vp=(cam and cam.ViewportSize) or Vector2.new(850,650)
+ frame.AnchorPoint=Vector2.new(.5,.5)
+ frame.Position=UDim2.fromScale(.5,.5)
+ frame.Size=UDim2.fromOffset(math.min(w,math.max(240,vp.X-16)),math.min(h,math.max(230,vp.Y-24)))
+end
+local function drag(frame,handle,onFinished)
+ local dragging=false
+ local origin,start,inputRef
+ listen(handle.InputBegan,function(input)
+  if input.UserInputType==Enum.UserInputType.MouseButton1 then
+   dragging=true;origin=frame.Position;start=input.Position;inputRef=input
+  end
+ end)
+ -- Uma unica conexao de soltura, em vez de criar outra a cada arrasto.
+ listen(UIS.InputEnded,function(input)
+  if dragging and (input==inputRef or input.UserInputType==Enum.UserInputType.MouseButton1) then
+   dragging=false
+   if onFinished then onFinished(frame.Position) end
+  end
+ end)
+ listen(UIS.InputChanged,function(input)
+  if not dragging then return end
+  if input==inputRef or (inputRef and inputRef.UserInputType==Enum.UserInputType.MouseButton1 and input.UserInputType==Enum.UserInputType.MouseMovement) then
+   local d=input.Position-start
+   frame.Position=UDim2.new(origin.X.Scale,origin.X.Offset+d.X,origin.Y.Scale,origin.Y.Offset+d.Y)
+  end
+ end)
+end
+local function character() return LocalPlayer.Character end
+local function humanoid() local c=character();return c and c:FindFirstChildOfClass('Humanoid') end
+local function root() local c=character();return c and c:FindFirstChild('HumanoidRootPart') end
+
+-- Codigo e tela de key antigos removidos: painel pessoal para PC.
+
+-- Design VELOSO PRO: identidade azul eletrico, grafite e superficies foscas.
+local YELLOW=Color3.fromRGB(190,65,255) -- nome legado; cor atual = azul
+local YELLOW_DARK=Color3.fromRGB(122,39,208)
+local DARK=Color3.fromRGB(10,7,17)
+local PANEL=Color3.fromRGB(18,12,29)
+local CARD=Color3.fromRGB(39,20,65)
+local FG=Color3.fromRGB(248,249,252)
+local MUTED=Color3.fromRGB(171,157,185)
+local menu=make('Frame',{
+ Name='KIRA_MENU_WINDOW',BackgroundColor3=DARK,BorderSizePixel=0,Visible=false,ClipsDescendants=true
+},gui)
+center(menu,960,550)
+-- Coordenadas internas fixas: a UIScale reduz a janela em telas menores sem
+-- sobrepor a pesquisa, o selo de status e os controles da barra lateral.
+menu.Size=UDim2.fromOffset(960,550)
+rounded(menu,14)
+make('UIStroke',{Color=Color3.fromRGB(116,119,130),Thickness=1.2,Transparency=.25},menu)
+make('UIGradient',{Color=ColorSequence.new({
+ ColorSequenceKeypoint.new(0,Color3.fromRGB(16,19,25)),
+ ColorSequenceKeypoint.new(.42,Color3.fromRGB(7,9,12)),
+ ColorSequenceKeypoint.new(1,Color3.fromRGB(12,15,19))
+}),Rotation=90},menu)
+-- Camadas de profundidade em GUI nativa: aparencia metalica sem efeitos caros.
+uiObjects.innerBevel=make('Frame',{
+ Name='MolduraMetalica3D',Position=UDim2.fromOffset(4,4),Size=UDim2.new(1,-8,1,-8),
+ BackgroundTransparency=1,BorderSizePixel=0,Active=false,ZIndex=2
+},menu)
+rounded(uiObjects.innerBevel,11)
+make('UIStroke',{Color=Color3.fromRGB(118,62,180),Thickness=1,Transparency=.67},uiObjects.innerBevel)
+uiObjects.lowerShade=make('Frame',{
+ Name='SombraInferior3D',AnchorPoint=Vector2.new(0,1),Position=UDim2.fromScale(0,1),
+ Size=UDim2.new(1,0,0,19),BackgroundColor3=Color3.fromRGB(0,3,9),
+ BackgroundTransparency=.30,BorderSizePixel=0,Active=false,ZIndex=1
+},menu)
+make('UIGradient',{Rotation=90,Transparency=NumberSequence.new({
+ NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(1,.18)
+})},uiObjects.lowerShade)
+-- Linha azul fina do conceito de referencia.
+uiObjects.topAccent=make('Frame',{
+ Name='AcentoSuperior',Position=UDim2.fromOffset(16,0),
+ Size=UDim2.new(1,-32,0,2),BackgroundColor3=YELLOW,
+ BackgroundTransparency=.10,BorderSizePixel=0,ZIndex=7
+},menu)
+make('UIGradient',{Color=ColorSequence.new({
+ ColorSequenceKeypoint.new(0,Color3.fromRGB(53,18,93)),
+ ColorSequenceKeypoint.new(.40,YELLOW),
+ ColorSequenceKeypoint.new(1,Color3.fromRGB(42,16,75))
+})},uiObjects.topAccent)
+local header=make('Frame',{
+ Name='Arrastar',Size=UDim2.new(1,0,0,76),BackgroundColor3=Color3.fromRGB(12,15,20),
+ BorderSizePixel=0,Active=true
+},menu)
+rounded(header,12)
+make('UIGradient',{Rotation=90,Color=ColorSequence.new({
+ ColorSequenceKeypoint.new(0,Color3.fromRGB(36,45,60)),
+ ColorSequenceKeypoint.new(.33,Color3.fromRGB(20,25,34)),
+ ColorSequenceKeypoint.new(1,Color3.fromRGB(8,12,21))
+})},header)
+uiObjects.headDivider=make('Frame',{Position=UDim2.new(0,0,1,-1),Size=UDim2.new(1,0,0,1),
+ BackgroundColor3=Color3.fromRGB(132,62,211),BackgroundTransparency=.34,BorderSizePixel=0},header)
+uiObjects.headSpecular=make('Frame',{Name='ReflexoDaBorda',
+ Position=UDim2.fromOffset(15,4),Size=UDim2.new(1,-30,0,1),
+ BackgroundColor3=Color3.fromRGB(207,152,252),BackgroundTransparency=.70,
+ BorderSizePixel=0,Active=false,ZIndex=3
+},header)
+-- Fantasma roxo enviado pelo criador JS; utiliza o PNG incluido no ZIP.
+uiObjects.brandMark=make('Frame',{Name='KIRA_Logo_Fantasma',Position=UDim2.fromOffset(8,3),
+ Size=UDim2.fromOffset(76,70),BackgroundColor3=Color3.fromRGB(26,13,42),
+ BorderSizePixel=0,Active=false},header)
+rounded(uiObjects.brandMark,10)
+make('UIStroke',{Color=Color3.fromRGB(168,62,255),Thickness=1.5,Transparency=.21},uiObjects.brandMark)
+make('UIGradient',{Rotation=105,Color=ColorSequence.new({
+ ColorSequenceKeypoint.new(0,Color3.fromRGB(62,29,95)),
+ ColorSequenceKeypoint.new(.5,Color3.fromRGB(24,12,39)),
+ ColorSequenceKeypoint.new(1,Color3.fromRGB(13,6,26))
+})},uiObjects.brandMark)
+if LOGO_SOURCE then
+ make('ImageLabel',{
+  Name='LogoKiraFantasma',Position=UDim2.fromOffset(0,0),
+  Size=UDim2.fromScale(1,1),BackgroundTransparency=1,
+  BorderSizePixel=0,Image=LOGO_SOURCE,ScaleType=Enum.ScaleType.Fit,
+  ImageRectOffset=Vector2.new(0,0),ImageRectSize=Vector2.new(0,0)
+ },uiObjects.brandMark)
+else
+ -- Sem imagem carregavel, indica a marca sem fingir ter carregado o PNG.
+ local logoFallback=text(uiObjects.brandMark,'K',31,UDim2.fromOffset(1,8),UDim2.fromOffset(54,38))
+ logoFallback.TextColor3=YELLOW;logoFallback.Font=Enum.Font.GothamBlack
+end
+local title=text(header,'KIRA',24,UDim2.fromOffset(91,12),UDim2.fromOffset(88,32))
+title.TextXAlignment=Enum.TextXAlignment.Left
+title.Font=Enum.Font.GothamBold
+uiObjects.goldTitle=text(header,'MENU',24,UDim2.fromOffset(178,12),UDim2.fromOffset(113,32))
+uiObjects.goldTitle.Font=Enum.Font.GothamBold
+uiObjects.goldTitle.TextXAlignment=Enum.TextXAlignment.Left
+uiObjects.goldTitle.TextColor3=YELLOW
+uiObjects.subbrand=text(header,'B Y   J S   •   B L A C K  &  P U R P L E',9,UDim2.fromOffset(93,44),UDim2.fromOffset(254,16))
+uiObjects.subbrand.TextColor3=Color3.fromRGB(179,181,188)
+uiObjects.subbrand.TextXAlignment=Enum.TextXAlignment.Left
+uiObjects.activePill=make('Frame',{Name='EstadoDoPainel',Position=UDim2.fromOffset(347,22),
+ Size=UDim2.fromOffset(130,29),BackgroundColor3=Color3.fromRGB(20,22,25),BorderSizePixel=0},header)
+rounded(uiObjects.activePill,13)
+make('UIStroke',{Color=YELLOW,Thickness=1,Transparency=.22},uiObjects.activePill)
+make('UIGradient',{Rotation=90,Color=ColorSequence.new({
+ ColorSequenceKeypoint.new(0,Color3.fromRGB(49,25,73)),
+ ColorSequenceKeypoint.new(.5,Color3.fromRGB(29,15,49)),
+ ColorSequenceKeypoint.new(1,Color3.fromRGB(16,8,30))
+})},uiObjects.activePill)
+local badgeDot=make('Frame',{Position=UDim2.fromOffset(12,10),Size=UDim2.fromOffset(8,8),
+ BackgroundColor3=YELLOW,BorderSizePixel=0},uiObjects.activePill)
+rounded(badgeDot,8)
+local pillText=text(uiObjects.activePill,'PAINEL ATIVO',10,UDim2.fromOffset(27,5),UDim2.fromOffset(100,19))
+pillText.Font=Enum.Font.GothamBold
+pillText.TextXAlignment=Enum.TextXAlignment.Left
+local mini=make('TextButton',{
+ Name='FecharEMinimizar',Text='×',Font=Enum.Font.GothamBold,TextSize=24,
+ TextColor3=FG,BackgroundColor3=Color3.fromRGB(29,31,37),
+ Position=UDim2.new(1,-42,0,22),Size=UDim2.fromOffset(29,29),BorderSizePixel=0
+},header)
+rounded(mini,6)
+mini.Visible=false -- KIRA: sem botao X; use o atalho
+uiObjects.closeStroke=make('UIStroke',{Color=Color3.fromRGB(129,133,142),Thickness=1,Transparency=.45},mini)
+listen(mini.MouseEnter,function()
+ if not alive then return end
+ tween(mini,.17,{BackgroundColor3=Color3.fromRGB(50,56,68)})
+ tween(uiObjects.closeStroke,.17,{Transparency=.10})
+end)
+listen(mini.MouseLeave,function()
+ if not alive then return end
+ tween(mini,.17,{BackgroundColor3=Color3.fromRGB(20,20,25)})
+ tween(uiObjects.closeStroke,.17,{Transparency=.45})
+end)
+-- Contorno metalizado ja presente no botao superior.
+local searchBox=make('TextBox',{
+ Name='Pesquisa',Text='',PlaceholderText='Pesquisar funções...',ClearTextOnFocus=false,
+ TextXAlignment=Enum.TextXAlignment.Left,Font=Enum.Font.Gotham,TextSize=12,
+ TextColor3=FG,PlaceholderColor3=MUTED,
+ BackgroundColor3=Color3.fromRGB(13,15,20),BorderSizePixel=0,
+ Position=UDim2.new(1,-454,0,20),Size=UDim2.fromOffset(369,36)
+},header)
+rounded(searchBox,9)
+uiObjects.searchStroke=make('UIStroke',{Color=Color3.fromRGB(107,55,165),Thickness=1,Transparency=.39},searchBox)
+listen(searchBox.Focused,function()
+ if alive then tween(uiObjects.searchStroke,.20,{Color=YELLOW,Transparency=.08}) end
+end)
+listen(searchBox.FocusLost,function()
+ if alive then tween(uiObjects.searchStroke,.20,{Color=Color3.fromRGB(107,55,165),Transparency=.39}) end
+end)
+-- Contorno dinamico de pesquisa ja criado.
+make('UIPadding',{PaddingLeft=UDim.new(0,39),PaddingRight=UDim.new(0,10)},searchBox)
+-- Lupa vetorial no campo de pesquisa: evita glifos que nao aparecem no Roblox.
+local lupaAro=make('Frame',{
+ Name='LupaPesquisa',Position=UDim2.new(1,-442,0,32),
+ Size=UDim2.fromOffset(12,12),BackgroundTransparency=1,BorderSizePixel=0,
+ ZIndex=3,Active=false
+},header)
+rounded(lupaAro,12)
+make('UIStroke',{
+ Color=Color3.fromRGB(220,220,228),Thickness=1.8,Transparency=.12,
+ ApplyStrokeMode=Enum.ApplyStrokeMode.Border
+},lupaAro)
+local lupaCabo=make('Frame',{
+ Name='CaboDaLupa',AnchorPoint=Vector2.new(0,.5),
+ Position=UDim2.new(1,-431,0,44),Size=UDim2.fromOffset(8,2),
+ Rotation=46,BackgroundColor3=Color3.fromRGB(220,220,228),
+ BackgroundTransparency=.12,BorderSizePixel=0,ZIndex=3,Active=false
+},header)
+rounded(lupaCabo,3)
+local sideWidth=196
+local sidebar=make('ScrollingFrame',{
+ Name='Abas',Position=UDim2.fromOffset(14,108),Size=UDim2.new(0,sideWidth,1,-225),
+ BackgroundColor3=Color3.fromRGB(13,16,21),BorderSizePixel=0,ScrollBarThickness=2,
+ ScrollBarImageColor3=YELLOW_DARK,AutomaticCanvasSize=Enum.AutomaticSize.Y,
+ CanvasSize=UDim2.fromOffset(0,0)
+},menu)
+rounded(sidebar,11)
+make('UIStroke',{Color=Color3.fromRGB(98,52,148),Thickness=1.2,Transparency=.53},sidebar)
+make('UIGradient',{Rotation=90,Color=ColorSequence.new({
+ ColorSequenceKeypoint.new(0,Color3.fromRGB(26,32,45)),
+ ColorSequenceKeypoint.new(.60,Color3.fromRGB(12,17,27)),
+ ColorSequenceKeypoint.new(1,Color3.fromRGB(6,10,18))
+})},sidebar)
+make('UIListLayout',{Padding=UDim.new(0,7),SortOrder=Enum.SortOrder.LayoutOrder},sidebar)
+make('UIPadding',{
+ PaddingTop=UDim.new(0,7),PaddingLeft=UDim.new(0,8),
+ PaddingRight=UDim.new(0,8),PaddingBottom=UDim.new(0,8)
+},sidebar)
+local content=make('Frame',{
+ Name='Opcoes',Position=UDim2.fromOffset(229,108),
+ Size=UDim2.new(1,-243,1,-123),
+ BackgroundColor3=Color3.fromRGB(12,14,18),BorderSizePixel=0
+},menu)
+rounded(content,11)
+make('UIStroke',{Color=Color3.fromRGB(110,55,172),Thickness=1.2,Transparency=.47},content)
+make('UIGradient',{Color=ColorSequence.new({
+ ColorSequenceKeypoint.new(0,Color3.fromRGB(28,34,46)),
+ ColorSequenceKeypoint.new(.2,Color3.fromRGB(17,21,30)),
+ ColorSequenceKeypoint.new(1,Color3.fromRGB(7,10,17))
+}),Rotation=90},content)
+local function bevelEdges(obj)
+ local top=make('Frame',{
+  Name='Reflexo3D',Position=UDim2.new(0,9,0,1),Size=UDim2.new(1,-18,0,1),
+  BackgroundColor3=Color3.fromRGB(190,138,239),BackgroundTransparency=.80,
+  BorderSizePixel=0,Active=false,ZIndex=3
+ },obj)
+ local bottom=make('Frame',{
+  Name='Sombra3D',AnchorPoint=Vector2.new(0,1),Position=UDim2.new(0,9,1,-1),
+  Size=UDim2.new(1,-18,0,2),BackgroundColor3=Color3.fromRGB(0,4,11),
+  BackgroundTransparency=.24,BorderSizePixel=0,Active=false,ZIndex=2
+ },obj)
+ return top,bottom
+end
+-- A logo no cabecalho usa a imagem local ou o assetid configurado.
+uiObjects.navFooter=text(menu,'KIRA MENU   •   SYSTEM ONLINE',9,
+ UDim2.new(0,23,1,-37),UDim2.fromOffset(175,16))
+uiObjects.navFooter.TextColor3=Color3.fromRGB(124,124,136)
+uiObjects.navFooter.TextXAlignment=Enum.TextXAlignment.Left
+uiObjects.navFooter.Visible=false
+uiObjects.pageHeading=text(menu,'PRINCIPAIS',22,UDim2.fromOffset(257,115),UDim2.new(1,-282,0,29))
+uiObjects.pageHeading.TextXAlignment=Enum.TextXAlignment.Left
+uiObjects.pageHeading.Font=Enum.Font.GothamBold
+uiObjects.pageHeading.ZIndex=2
+uiObjects.pageAccent=make('Frame',{
+ Name='IndicadorDeSecao',Position=UDim2.fromOffset(244,122),
+ Size=UDim2.fromOffset(7,18),BackgroundColor3=YELLOW,
+ BorderSizePixel=0,ZIndex=3
+},menu)
+rounded(uiObjects.pageAccent,3)
+local pages,nav={},{}
+local tabNames={'Principais','ESP','ESPMy','Hitbox','Teleporte','Bypass','Config'}
+local tabLabels={Principais='PRINCIPAIS',ESP='ESP',Hitbox='COMBATE',
+ Bypass='BYPASS',Teleporte='TELEPORTE',Config='CONFIGURAÇÕES',ESPMy='ESP MY'}
+local icons={Principais='P',ESP='E',ESPMy='E',Hitbox='C',Teleporte='T',Bypass='B',Config='C'}
+for i,name in ipairs(tabNames) do
+ local b=make('TextButton',{
+  Name='Aba_'..name,Text='',BackgroundColor3=Color3.fromRGB(16,18,23),
+  AutoButtonColor=false,Size=UDim2.new(1,0,0,45),
+  LayoutOrder=i,BorderSizePixel=0
+ },sidebar)
+ rounded(b,8)
+ bevelEdges(b)
+ make('UIStroke',{Color=Color3.fromRGB(88,91,101),Thickness=1,Transparency=.87},b)
+ local indicator=make('Frame',{
+  Name='Indicador',Size=UDim2.new(0,4,1,0),Position=UDim2.fromOffset(0,0),
+  BackgroundColor3=YELLOW,BorderSizePixel=0,Visible=false
+ },b)
+ rounded(indicator,2)
+ local initialBg=make('Frame',{
+  Name='EmblemaDaAba',Position=UDim2.fromOffset(9,8),Size=UDim2.fromOffset(28,29),
+  BackgroundColor3=Color3.fromRGB(43,24,67),BorderSizePixel=0,Active=false
+ },b)
+ rounded(initialBg,7)
+ make('UIStroke',{Color=Color3.fromRGB(108,55,173),Thickness=.9,Transparency=.46},initialBg)
+ make('UIGradient',{Rotation=90,Color=ColorSequence.new({
+  ColorSequenceKeypoint.new(0,Color3.fromRGB(105,38,158)),
+  ColorSequenceKeypoint.new(1,Color3.fromRGB(25,10,46))
+ })},initialBg)
+ local ico=text(b,icons[name],17,UDim2.fromOffset(10,9),UDim2.fromOffset(28,28))
+ ico.Name='Icone';ico.TextColor3=Color3.fromRGB(225,171,255);ico.Font=Enum.Font.GothamBlack
+ local txt=text(b,tabLabels[name] or name,11,UDim2.fromOffset(46,8),UDim2.new(1,-47,0,28))
+ txt.Name='Nome';txt.TextXAlignment=Enum.TextXAlignment.Left
+ txt.Font=Enum.Font.GothamBold
+ nav[name]=b
+ if name=='ESPMy' or name=='Bypass' then b.Visible=false end -- ESP MY e subaba; Bypass exige codigo KIRA
+ -- Teleporte permanece visivel
+ listen(b.MouseEnter,function()
+  if alive and not b.Indicador.Visible then
+   tween(b,.28,{BackgroundColor3=Color3.fromRGB(32,35,40)})
+  end
+ end)
+ listen(b.MouseLeave,function()
+  if alive and not b.Indicador.Visible then
+   tween(b,.29,{BackgroundColor3=Color3.fromRGB(16,18,23)})
+  end
+ end)
+ local pg=make('ScrollingFrame',{
+  Name=name,Position=UDim2.fromOffset(14,52),Size=UDim2.new(1,-28,1,-65),
+  BackgroundTransparency=1,ScrollBarThickness=2,ScrollBarImageColor3=YELLOW_DARK,
+  AutomaticCanvasSize=Enum.AutomaticSize.Y,CanvasSize=UDim2.fromOffset(0,0),
+  Visible=false,BorderSizePixel=0
+ },content)
+ make('UIListLayout',{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,8)},pg)
+ make('UIPadding',{
+  PaddingTop=UDim.new(0,4),PaddingLeft=UDim.new(0,4),
+  PaddingRight=UDim.new(0,4),PaddingBottom=UDim.new(0,12)
+ },pg)
+ pages[name]=pg
+end
+local function filterOptions()
+ local term=string.lower(searchBox.Text or '')
+ for _,pg in pairs(pages) do
+  for _,item in ipairs(pg:GetChildren()) do
+   if item:IsA('GuiObject') and item.Name~='UIListLayout' and item.Name~='UIPadding' then
+    local haystack={}
+    if item:IsA('TextButton') or item:IsA('TextLabel') then
+     table.insert(haystack,item.Text)
+    end
+    for _,d in ipairs(item:GetDescendants()) do
+     if d:IsA('TextLabel') or d:IsA('TextButton') then
+      table.insert(haystack,d.Text)
+     end
+    end
+    local joined=string.lower(table.concat(haystack,' '))
+    item.Visible=(item:GetAttribute('KiraHidden')~=true) and (term=='' or string.find(joined,term,1,true)~=nil)
+   end
+  end
+ end
+end
+local uiMotion=true
+-- Os cliques do JS MENU sempre usam o som; volume zero deixa mudo.
+local uiSoundVolume=25 -- 0 a 100, padrao: 25%
+local soundConfigFile='KIRA_SOUND_'..tostring(LocalPlayer.UserId)..'.json'
+local function loadPanelVolume()
+ if type(readfile)~='function' then return end
+ local ok,data=pcall(function() return HttpService:JSONDecode(readfile(soundConfigFile)) end)
+ if ok and type(data)=='table' and type(data.volume)=='number' then
+  uiSoundVolume=math.floor(math.clamp(data.volume,0,100)+.5)
+ end
+end
+local function savePanelVolume()
+ if type(writefile)~='function' then return end
+ pcall(function() writefile(soundConfigFile,HttpService:JSONEncode({volume=uiSoundVolume})) end)
+end
+loadPanelVolume()
+-- Sons separados: clique normal, ativacao e desativacao.
+-- IDs podem ser trocados se o Roblox restringir algum audio.
+local UI_SOUND_IDS={click='rbxassetid://12221967',enabled='rbxassetid://12221967',disabled='rbxassetid://12221967'}
+local function playPanelSound(kind)
+ if not alive or uiSoundVolume<=0 then return end
+ local speeds={click=1,enabled=1.45,disabled=.72}
+ local snd=make('Sound',{
+  SoundId=UI_SOUND_IDS[kind] or UI_SOUND_IDS.click,
+  Volume=uiSoundVolume/100,
+  PlaybackSpeed=speeds[kind] or 1
+ },gui)
+ snd:Play()
+ task.delay(1.2,function() if snd.Parent then snd:Destroy() end end)
+end
+local function tapSound() playPanelSound('click') end
+-- Retem a aba e a rolagem de cada pagina, inclusive ao destruir/reabrir o
+-- painel. Os valores usam o mesmo armazenamento privado por UserId dos toggles.
+settings.tabState={}
+do
+ local state=settings.tabState
+ local tabKey,storedTab=settings.pref.start(content,'Ultima aba aberta','Principais')
+ state.initial='Principais'
+ state.tabs={}
+ state.ready=false
+ for _,name in ipairs(tabNames) do
+  if name==storedTab then state.initial=name end
+  local pg=pages[name]
+  local scrollKey,storedY=settings.pref.start(pg,'Rolagem vertical',0)
+  state.tabs[name]={key=scrollKey,y=math.max(0,storedY),restoring=false}
+  listen(pg:GetPropertyChangedSignal('CanvasPosition'),function()
+   local entry=state.tabs[name]
+   if not state.ready or state.current~=name or not pg.Visible or not menu.Visible or entry.restoring then return end
+   local y=math.max(0,pg.CanvasPosition.Y)
+   if math.abs(y-entry.y)>.5 then
+    entry.y=y
+    settings.pref.set(entry.key,y)
+   end
+  end)
+ end
+ function state.capture()
+  local name=state.current
+  local pg=name and pages[name]
+  local entry=name and state.tabs[name]
+  if not state.ready or not pg or not entry or entry.restoring or not pg.Visible then return end
+  local y=math.max(0,pg.CanvasPosition.Y)
+  entry.y=y
+  settings.pref.set(entry.key,y)
+ end
+ function state.activate(name)
+  if not state.tabs[name] then return false end
+  if state.current==name then return false end
+  state.capture()
+  state.current=name
+  settings.pref.set(tabKey,name)
+  return true
+ end
+ function state.restoreScroll(name)
+  local pg=name and pages[name]
+  local entry=name and state.tabs[name]
+  if not state.ready or not pg or not entry or entry.restoring then return end
+  entry.restoring=true
+  task.defer(function()
+   if alive and pg.Parent and pg.Visible and state.current==name then
+    local maxY=math.max(0,pg.AbsoluteCanvasSize.Y-pg.AbsoluteWindowSize.Y)
+    pg.CanvasPosition=Vector2.new(0,math.clamp(entry.y,0,maxY))
+   end
+   entry.restoring=false
+  end)
+ end
+ function state.enable()
+  state.ready=true
+  state.restoreScroll(state.current)
+ end
+end
+-- Subabas ESP JOGADOR / ESP MY dentro da mesma aba lateral ESP.
+local show
+local espSubBar=make('Frame',{
+ Name='KIRA_ESP_Subabas',Position=UDim2.fromOffset(14,49),
+ Size=UDim2.new(1,-28,0,38),BackgroundTransparency=1,Visible=false,
+ BorderSizePixel=0,ZIndex=5
+},content)
+local espSubButtons={}
+for i,entry in ipairs({{'ESP','ESP JOGADOR'},{'ESPMy','ESP MY'}}) do
+ local sub=make('TextButton',{
+  Name='Subaba_'..entry[1],Text=entry[2],
+  Position=UDim2.new((i-1)*.5,(i==1 and 0 or 5),0,0),
+  Size=UDim2.new(.5,-5,1,0),BackgroundColor3=CARD,
+  TextColor3=FG,Font=Enum.Font.GothamBold,TextSize=12,
+  BorderSizePixel=0,AutoButtonColor=false
+ },espSubBar)
+ rounded(sub,8)
+ espSubButtons[entry[1]]=sub
+ listen(sub.MouseButton1Click,function() tapSound();show(entry[1]) end)
+end
+-- Painel lateral de ajustes ESP, independente da lista de marcacoes.
+local espSettingsPanel=make('Frame',{
+ Name='KIRA_ESP_Ajustes_Externo',Position=UDim2.fromOffset(0,0),
+ Size=UDim2.fromOffset(310,365),BackgroundColor3=Color3.fromRGB(22,11,38),
+ BorderSizePixel=0,Visible=false,ZIndex=20,Active=true
+},gui)
+rounded(espSettingsPanel,9)
+make('UIStroke',{Color=YELLOW,Thickness=2,Transparency=.10},espSettingsPanel)
+make('UIGradient',{Rotation=90,Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(53,20,87)),ColorSequenceKeypoint.new(.5,Color3.fromRGB(23,10,41)),ColorSequenceKeypoint.new(1,Color3.fromRGB(10,6,22))})},espSettingsPanel)
+settings.ajustesExternosAtivos=true -- Config pode mostrar/ocultar esta janela sem mexer nos modulos
+local espSettingsTitle=text(espSettingsPanel,'AJUSTES',13,UDim2.fromOffset(12,8),UDim2.new(1,-20,0,28))
+espSettingsTitle.TextXAlignment=Enum.TextXAlignment.Left
+espSettingsTitle.TextColor3=YELLOW
+local espSettingsScroll=make('ScrollingFrame',{
+ Name='ListaDeAjustes',Position=UDim2.fromOffset(7,40),
+ Size=UDim2.new(1,-14,1,-46),BackgroundTransparency=1,
+ ScrollBarThickness=3,ScrollBarImageColor3=YELLOW,
+ AutomaticCanvasSize=Enum.AutomaticSize.Y,CanvasSize=UDim2.fromOffset(0,0)
+},espSettingsPanel)
+make('UIListLayout',{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,7)},espSettingsScroll)
+make('UIPadding',{PaddingBottom=UDim.new(0,12)},espSettingsScroll)
+local espSettingsContainers={}
+for _,which in ipairs({'Principais','ESP','ESPMy','Hitbox','Teleporte','Bypass','Config'}) do
+ local group=make('Frame',{
+  Name='Ajustes_'..which,Size=UDim2.new(1,-5,0,0),
+  AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1,
+  Visible=(which=='ESP')
+ },espSettingsScroll)
+ make('UIListLayout',{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,7)},group)
+ espSettingsContainers[which]=group
+end
+-- Mantem os controles originais e callbacks, apenas move sua posicao visual.
+local function moveEspSetting(which,control)
+ if control and espSettingsContainers[which] then
+  control.Parent=espSettingsContainers[which]
+  control.Size=UDim2.new(1,-4,0,control.Size.Y.Offset>0 and control.Size.Y.Offset or 62)
+ end
+end
+local function moveLastEspControl(which)
+ local pg=pages[which]
+ local highest=nil
+ for _,child in ipairs(pg:GetChildren()) do
+  if child:IsA('GuiObject') and child.LayoutOrder>0 and
+     (not highest or child.LayoutOrder>highest.LayoutOrder) then highest=child end
+ end
+ if highest then moveEspSetting(which,highest) end
+end
+-- Painel de ajustes e uma janela independente, fora da moldura KIRA.
+-- Reposiciona ao lado do menu, ou do lado esquerdo se nao houver espaco.
+local function positionExternalEspSettings()
+ local camera=workspace.CurrentCamera
+ if not camera then return end
+ local viewport=camera.ViewportSize
+ local width=espSettingsPanel.AbsoluteSize.X
+ local height=espSettingsPanel.AbsoluteSize.Y
+ local menuX=menu.AbsolutePosition.X
+ local menuY=menu.AbsolutePosition.Y
+ local menuW=menu.AbsoluteSize.X
+ local right=menuX+menuW+12
+ local left=menuX-width-12
+ local x
+ if right+width<=viewport.X-8 then
+  x=right
+ elseif left>=8 then
+  x=left
+ else
+  -- Em tela pequena o painel externo fica junto da borda direita.
+  x=math.max(8,viewport.X-width-8)
+ end
+ local y=math.clamp(menuY,8,math.max(8,viewport.Y-height-8))
+ espSettingsPanel.Position=UDim2.fromOffset(x,y)
+end
+settings.sincronizarAjustesExternos=function()
+ espSettingsPanel.Visible=alive and menu.Visible and settings.ajustesExternosAtivos
+ if espSettingsPanel.Visible then task.defer(positionExternalEspSettings) end
+end
+listen(menu:GetPropertyChangedSignal('Visible'),settings.sincronizarAjustesExternos)
+listen(menu:GetPropertyChangedSignal('Position'),positionExternalEspSettings)
+listen(menu:GetPropertyChangedSignal('AbsoluteSize'),positionExternalEspSettings)
+listen(espSettingsPanel:GetPropertyChangedSignal('AbsoluteSize'),positionExternalEspSettings)
+local function layoutEspPages(name)
+ local isEsp=(name=='ESP' or name=='ESPMy')
+ espSubBar.Visible=isEsp
+ settings.sincronizarAjustesExternos()
+ espSettingsTitle.Text='AJUSTES • '..(tabLabels[name] or string.upper(name))
+ for which,group in pairs(espSettingsContainers) do group.Visible=(which==name) end
+ for _,which in ipairs({'ESP','ESPMy'}) do
+  local pg=pages[which]
+  pg.Size=isEsp and UDim2.new(1,-28,1,-108) or UDim2.new(1,-28,1,-65)
+ end
+ for which,b in pairs(espSubButtons) do
+  b.BackgroundColor3=(which==name) and YELLOW or CARD
+  b.TextColor3=(which==name) and Color3.fromRGB(255,255,255) or FG
+ end
+end
+show=function(name)
+ -- Todas as abas, incluindo Teleporte, ficam acessiveis
+ if not pages[name] then return end
+ local changed=settings.tabState.activate(name)
+ uiObjects.pageHeading.Text=(name=='ESPMy' and 'ESP' or (tabLabels[name] or string.upper(name)))
+ layoutEspPages(name)
+ for n,pg in pairs(pages) do
+  pg.Visible=(n==name)
+  if n==name then
+   local y=(name=='ESP' or name=='ESPMy') and 96 or 52
+   if uiMotion then
+    pg.Position=UDim2.fromOffset(36,y)
+    tween(pg,.55,{Position=UDim2.fromOffset(14,y)})
+   else pg.Position=UDim2.fromOffset(14,y) end
+  end
+ end
+ for n,b in pairs(nav) do
+  local selected=(n==name or (n=='ESP' and name=='ESPMy'))
+  if uiMotion then
+  tween(b,.36,{BackgroundColor3=selected and Color3.fromRGB(64,27,101) or Color3.fromRGB(16,18,23)})
+  else
+   b.BackgroundColor3=selected and Color3.fromRGB(64,27,101) or Color3.fromRGB(16,18,23)
+  end
+  b.Indicador.Visible=selected
+  if selected and uiMotion then
+   b.Indicador.Size=UDim2.new(0,4,0,7)
+   tween(b.Indicador,.50,{Size=UDim2.new(0,4,1,0)})
+  end
+  b.Icone.TextColor3=selected and YELLOW or Color3.fromRGB(196,198,205)
+  b.Nome.TextColor3=selected and FG or Color3.fromRGB(168,170,175)
+ end
+ searchBox.Text=''
+ filterOptions()
+ if changed then settings.tabState.restoreScroll(name) end
+end
+for name,b in pairs(nav) do
+ listen(b.MouseButton1Click,function() tapSound();show(name) end)
+end
+-- A aba BYPASS e somente uma pagina de controles locais, nao um bypass de anticheat.
+-- Digitar KIRA na pesquisa revela a aba ate a proxima execucao do script.
+local bypassRevelado=false
+listen(searchBox:GetPropertyChangedSignal('Text'),function()
+ if not bypassRevelado and string.lower((searchBox.Text or ''):match('^%s*(.-)%s*$'))=='kira' then
+  bypassRevelado=true
+  nav.Bypass.Visible=true
+  searchBox.Text=''
+ end
+ filterOptions()
+end)
+
+local function nextOrder(pg)
+ pg:SetAttribute('NextOrder',(pg:GetAttribute('NextOrder') or 0)+1)
+ return pg:GetAttribute('NextOrder')
+end
+local function section(pg,name)
+ local o=text(pg,name,12,UDim2.new(),UDim2.new(1,0,0,28))
+ o.LayoutOrder=nextOrder(pg)
+ o.TextXAlignment=Enum.TextXAlignment.Left
+ o.TextColor3=YELLOW
+ o.Font=Enum.Font.GothamBold
+ make('Frame',{
+  Name='SectionUnderline',BackgroundColor3=Color3.fromRGB(90,30,160),
+  BorderSizePixel=0,Position=UDim2.new(0,0,1,-2),Size=UDim2.new(1,0,0,1)
+ },o)
+ return o
+end
+local function note(pg,message)
+ local o=text(pg,message,10,UDim2.new(),UDim2.new(1,0,0,48))
+ o.LayoutOrder=nextOrder(pg)
+ o.TextColor3=MUTED
+ o.Font=Enum.Font.Gotham
+ o.TextXAlignment=Enum.TextXAlignment.Left
+ return o
+end
+local function button(pg,name,fn,silent)
+ local o=make('TextButton',{
+  Text='   '..name,Font=Enum.Font.GothamMedium,TextSize=12,
+  TextXAlignment=Enum.TextXAlignment.Left,TextColor3=FG,
+  TextWrapped=true,BackgroundColor3=CARD,
+  Size=UDim2.new(1,0,0,43),LayoutOrder=nextOrder(pg),
+  BorderSizePixel=0,AutoButtonColor=true
+ },pg)
+ rounded(o,10)
+ bevelEdges(o)
+ local outline=make('UIStroke',{
+  Color=Color3.fromRGB(115,70,165),Thickness=1,Transparency=.60
+ },o)
+ listen(o.MouseEnter,function()
+  if uiMotion then tween(o,.28,{BackgroundColor3=Color3.fromRGB(48,27,70)}) end
+  outline.Transparency=.06
+ end)
+ listen(o.MouseLeave,function()
+  if uiMotion then tween(o,.30,{BackgroundColor3=CARD}) else o.BackgroundColor3=CARD end
+  outline.Transparency=.52
+ end)
+ listen(o.MouseButton1Click,function() if alive then if not silent then tapSound() end;fn(o) end end)
+ return o
+end
+local function toggle(pg,name,initial,fn)
+ local prefKey,enabled=settings.pref.start(pg,name,not not initial)
+ local btn
+ local function refreshSwitch(animate)
+  if not btn or not btn:FindFirstChild('Status') then return end
+  local status=btn.Status
+  local position=enabled and UDim2.fromOffset(20,3) or UDim2.fromOffset(3,3)
+  status.BackgroundColor3=enabled and YELLOW or Color3.fromRGB(67,70,77)
+  if animate and uiMotion then
+   tween(status.Knob,.17,{Position=position})
+  else
+   status.Knob.Position=position
+  end
+ end
+ btn=button(pg,name,function()
+  enabled=not enabled
+  playPanelSound(enabled and 'enabled' or 'disabled')
+  refreshSwitch(true)
+  fn(enabled)
+  settings.pref.set(prefKey,enabled)
+ end,true)
+ btn.Text='   '..name
+ local mark=make('Frame',{
+  Name='Status',Position=UDim2.new(1,-50,.5,-11),Size=UDim2.fromOffset(39,22),
+  BackgroundColor3=enabled and YELLOW or Color3.fromRGB(67,70,77),
+  BorderSizePixel=0,Active=false
+ },btn)
+ rounded(mark,15)
+ make('UIStroke',{Color=YELLOW_DARK,Thickness=.7,Transparency=.50},mark)
+ local knob=make('Frame',{
+  Name='Knob',Position=enabled and UDim2.fromOffset(20,3) or UDim2.fromOffset(3,3),
+  Size=UDim2.fromOffset(16,16),BackgroundColor3=Color3.fromRGB(250,250,252),
+  BorderSizePixel=0,Active=false
+ },mark)
+ rounded(knob,16)
+ settings.pref.register(prefKey,function() fn(enabled) end)
+ return function(newValue)
+  enabled=not not newValue
+  refreshSwitch(false)
+  settings.pref.set(prefKey,enabled)
+ end
+end
+local function slider(pg,name,min,max,initial,callback)
+ local prefKey,stored=settings.pref.start(pg,name,initial)
+ if type(stored)=='number' and stored==stored then initial=math.clamp(math.floor(stored+.5),min,max) end
+ settings.pref.set(prefKey,initial)
+ local currentValue=initial
+ local wrap=make('Frame',{
+  BackgroundColor3=CARD,Size=UDim2.new(1,0,0,62),
+  LayoutOrder=nextOrder(pg),BorderSizePixel=0
+ },pg)
+ rounded(wrap,10)
+ make('UIStroke',{Color=Color3.fromRGB(110,115,128),Thickness=1,Transparency=.53},wrap)
+ local t=text(wrap,name,12,UDim2.fromOffset(15,4),UDim2.new(1,-90,0,23))
+ t.TextXAlignment=Enum.TextXAlignment.Left
+ t.Font=Enum.Font.GothamMedium
+ local value=text(wrap,tostring(initial),11,UDim2.new(1,-77,0,4),UDim2.fromOffset(62,23))
+ value.TextXAlignment=Enum.TextXAlignment.Right
+ value.TextColor3=YELLOW
+ local track=make('Frame',{
+  Position=UDim2.new(0,16,0,43),Size=UDim2.new(1,-32,0,5),
+  BackgroundColor3=Color3.fromRGB(64,66,71),BorderSizePixel=0,Active=true
+ },wrap)
+ rounded(track,3)
+ local fill=make('Frame',{
+  Size=UDim2.fromScale(math.clamp((initial-min)/math.max(1,max-min),0,1),1),
+  BackgroundColor3=YELLOW,BorderSizePixel=0
+ },track)
+ rounded(fill,3)
+ make('UIGradient',{
+ Color=ColorSequence.new({
+  ColorSequenceKeypoint.new(0,Color3.fromRGB(89,28,158)),
+  ColorSequenceKeypoint.new(1,YELLOW)
+ })
+ },fill)
+ -- Ponto branco na extremidade do trecho preenchido.
+ local knob=make('Frame',{
+  Position=UDim2.new(math.clamp((initial-min)/math.max(1,max-min),0,1),-7,0.5,-7),
+  Size=UDim2.fromOffset(14,14),
+  BackgroundColor3=YELLOW,BorderSizePixel=0,
+  Active=false,ZIndex=track.ZIndex+2
+ },track)
+ rounded(knob,14)
+ make('UIStroke',{Color=Color3.fromRGB(218,172,255),Transparency=.30,Thickness=.9},knob)
+ local dragging=false
+ local function setValue(v)
+  v=math.clamp(math.floor(v+.5),min,max)
+  currentValue=v
+  value.Text=tostring(v)
+  local fraction=(v-min)/math.max(1,max-min)
+  fill.Size=UDim2.fromScale(fraction,1)
+  knob.Position=UDim2.new(fraction,-7,0.5,-7)
+  callback(v)
+  settings.pref.set(prefKey,v)
+ end
+ local function setByX(x)
+  local fraction=math.clamp((x-track.AbsolutePosition.X)/math.max(1,track.AbsoluteSize.X),0,1)
+  setValue(min+(max-min)*fraction)
+ end
+ listen(track.InputBegan,function(i)
+  if i.UserInputType==Enum.UserInputType.MouseButton1 then
+   dragging=true;setByX(i.Position.X)
+  end
+ end)
+ listen(UIS.InputChanged,function(i)
+  if dragging and i.UserInputType==Enum.UserInputType.MouseMovement then
+   setByX(i.Position.X)
+  end
+ end)
+ listen(UIS.InputEnded,function(i)
+  if i.UserInputType==Enum.UserInputType.MouseButton1 then
+   dragging=false
+  end
+ end)
+ settings.pref.register(prefKey,function() callback(currentValue) end)
+ return setValue
+end
+local function field(pg,placeholder)
+ local f=make('TextBox',{
+  Text='',PlaceholderText=placeholder,ClearTextOnFocus=false,
+  Font=Enum.Font.Gotham,TextSize=11,TextColor3=FG,
+  PlaceholderColor3=MUTED,BackgroundColor3=CARD,
+  Size=UDim2.new(1,0,0,33),LayoutOrder=nextOrder(pg),BorderSizePixel=0
+ },pg)
+ rounded(f,9)
+ make('UIStroke',{Color=Color3.fromRGB(38,39,42),Thickness=.7},f)
+ return f
+end
+local toast=text(gui,'',12,UDim2.new(.5,-165,1,-64),UDim2.fromOffset(330,38))
+toast.AnchorPoint=Vector2.new(0,0);toast.BackgroundColor3=COLOR.side;toast.BackgroundTransparency=.12;toast.Visible=false
+rounded(toast,11)
+make('UIStroke',{Color=Color3.fromRGB(181,194,216),Transparency=.35,Thickness=1},toast)
+local toastSeq=0
+local function notify(msg)
+ toastSeq=toastSeq+1
+ local n=toastSeq
+ toast.Text=msg;toast.Visible=true
+ task.delay(2.5,function() if alive and toastSeq==n then toast.Visible=false end end)
+end
+
+-- ===== TELEPORTE MAIS SEGURO (V4.1) =====
+-- Evita mover apenas o HumanoidRootPart (que pode desalinhar o avatar),
+-- verifica piso no destino e zera velocidades. Nao contorna regras do servidor.
+local function teleportarSeguro(destino, rotulo, ignorarPersonagem)
+ if typeof(destino)~='CFrame' then
+  notify('Destino invalido')
+  return false
+ end
+ local char=character()
+ local r=root()
+ local h=humanoid()
+ if not char or not r or not h or h.Health<=0 then
+  notify('Aguarde seu personagem aparecer para teleportar')
+  return false
+ end
+ local cast=RaycastParams.new()
+ cast.FilterType=Enum.RaycastFilterType.Exclude
+ cast.FilterDescendantsInstances=ignorarPersonagem and {char,ignorarPersonagem} or {char}
+ cast.RespectCanCollide=true
+ local base=destino.Position
+ local hit=workspace:Raycast(base+Vector3.new(0,1.5,0),Vector3.new(0,-32,0),cast)
+ if not hit or hit.Normal.Y<0.65 then
+  notify('Teleporte cancelado: destino sem chao seguro')
+  return false
+ end
+ local altura=math.max(2.5,h.HipHeight+r.Size.Y*.5+.55)
+ local pos=Vector3.new(base.X,math.max(base.Y,hit.Position.Y+altura),base.Z)
+ -- Procura paredes/obstaculos no espaco ocupado pelo personagem.
+ local overlap=OverlapParams.new()
+ overlap.FilterType=Enum.RaycastFilterType.Exclude
+ overlap.FilterDescendantsInstances=cast.FilterDescendantsInstances
+ overlap.MaxParts=32
+ local ok,parts=pcall(function()
+  return workspace:GetPartBoundsInBox(CFrame.new(pos),Vector3.new(2,math.max(2.8,r.Size.Y+1.0),2),overlap)
+ end)
+ if ok then
+  for _,part in ipairs(parts) do
+   if part.CanCollide then
+    notify('Teleporte cancelado: destino ocupado por uma parede')
+    return false
+   end
+  end
+ end
+ if settings.fly then
+  settings.fly=false
+  stopFlyPhysics()
+ end
+ for _,part in ipairs(char:GetDescendants()) do
+  if part:IsA('BasePart') and not part.Anchored then
+   part.AssemblyLinearVelocity=Vector3.zero
+   part.AssemblyAngularVelocity=Vector3.zero
+  end
+ end
+ local cf=CFrame.new(pos)*destino.Rotation
+ local moved,err=pcall(function() char:PivotTo(cf) end)
+ if not moved then
+  warn('[JS MENU] Falha no teleporte: '..tostring(err))
+  notify('Nao foi possivel teleportar')
+  return false
+ end
+ r.AssemblyLinearVelocity=Vector3.zero
+ r.AssemblyAngularVelocity=Vector3.zero
+ notify(rotulo or 'Teleporte realizado')
+ return true
+end
+
+-- ===== PRINCIPAIS =====
+local speedLastHumanoid=nil
+local speedApplied=16
+local function applyMovement()
+ local h=humanoid()
+ if h then
+  local wanted=settings.speed and settings.speedValue or 16
+  if h~=speedLastHumanoid then
+   speedLastHumanoid=h
+   speedApplied=h.WalkSpeed
+  end
+  if not settings.speed then
+   speedApplied=16
+   h.WalkSpeed=16
+  elseif math.abs((h.WalkSpeed or 16)-speedApplied)>3 then
+   speedApplied=h.WalkSpeed
+  end
+  h.UseJumpPower=true
+  h.JumpPower=settings.jump and settings.jumpValue or 50
+ end
+ workspace.Gravity=settings.customGravity and settings.gravity or originals.gravity
+end
+-- O limite de 1000 aqui se refere ao controle local do painel.
+-- Servidores podem detectar e causar dano em qualquer velocidade.
+local movementGroundRay=RaycastParams.new()
+movementGroundRay.FilterType=Enum.RaycastFilterType.Exclude
+movementGroundRay.IgnoreWater=true
+local speedTicker=0
+listen(Run.Heartbeat,function(dt)
+ if not alive then return end
+ local h=humanoid()
+ if not h or h.Health<=0 then return end
+ if settings.speed then
+  if h~=speedLastHumanoid then
+   speedLastHumanoid=h
+   speedApplied=h.WalkSpeed
+  end
+  -- Suavizar aumento/reducao para reduzir impulsos subitos.
+  local wanted=math.clamp(settings.speedValue,0,1200)
+  local step=1700*math.clamp(dt,0,.12)
+  speedApplied=speedApplied+math.clamp(wanted-speedApplied,-step,step)
+  if math.abs(h.WalkSpeed-speedApplied)>.05 then h.WalkSpeed=speedApplied end
+ end
+ -- Ao caminhar rapidamente, tentar reduzir impacto de queda proxima ao solo.
+ -- Isto nao bloqueia dano ou anticheat aplicados pelo servidor.
+ speedTicker=speedTicker+dt
+ if speedTicker<.09 then return end
+ speedTicker=0
+ if (not settings.fly) and settings.speed and settings.speedValue<=1000 then
+  local r=root()
+  if r and r:IsA('BasePart') then
+   local v=r.AssemblyLinearVelocity
+   if v.Y< -52 then
+    movementGroundRay.FilterDescendantsInstances={character()}
+    local floor=workspace:Raycast(r.Position,Vector3.new(0,-14,0),movementGroundRay)
+    if floor and floor.Instance and floor.Instance.CanCollide then
+     r.AssemblyLinearVelocity=Vector3.new(v.X,-32,v.Z)
+    end
+   end
+  end
+ end
+end)
+section(pages.Principais,'MOVIMENTACAO')
+local setFlyToggle=toggle(pages.Principais,'Fly',false,function(v)
+ settings.fly=v;settings.flyUp=false;settings.flyDown=false
+ if not v then stopFlyPhysics() end
+ updateKeyPanel()
+end)
+local setFlySpeedSlider=slider(pages.Principais,'Velocidade do Fly',0,1000,45,function(v) settings.flySpeed=v end)
+slider(pages.Principais,'Suavizacao do Fly',0,100,65,function(v) settings.flySmooth=v end)
+note(pages.Principais,'Suavizacao: 0 = resposta imediata, 100 = movimento bem gradual. Valores altos de velocidade podem causar instabilidade.')
+-- Versao pessoal para PC: subir com Espaco e descer com Ctrl.
+toggle(pages.Principais,'Speed',false,function(v) settings.speed=v;applyMovement() end)
+slider(pages.Principais,'Velocidade',0,1200,32,function(v)
+ settings.speedValue=v
+ applyMovement()
+end)
+note(pages.Principais,'Speed e Fly: movimentacao suavizada ate 1000. Acima de 1000 a suavizacao contra quedas nao se aplica. O jogo ainda pode aplicar dano pelo servidor.')
+-- FLING DE CONTATO: gira apenas o proprio personagem; nao altera outros jogadores diretamente.
+-- O servidor pode cancelar o movimento, e nao existe garantia de afetar outros avatares.
+local flingAngular,flingHeight,flingRoot
+local flingSavedPlatformStand=nil
+local flingGroundY=nil
+local flingGroundClock=0
+local function stopFling()
+ if flingAngular then pcall(function() flingAngular:Destroy() end) end
+ if flingHeight then pcall(function() flingHeight:Destroy() end) end
+ flingAngular=nil;flingHeight=nil
+ if flingRoot and flingRoot.Parent then
+  pcall(function() flingRoot.AssemblyAngularVelocity=Vector3.zero end)
+ end
+ local h=humanoid()
+ if h and flingSavedPlatformStand~=nil then h.PlatformStand=flingSavedPlatformStand end
+ flingSavedPlatformStand=nil;flingRoot=nil;flingGroundY=nil
+end
+-- SPIN VISUAL: rotacao controlada sem travar a caminhada.
+-- Efeito no proprio avatar; nao controla outros jogadores.
+local spinSavedAutoRotate=nil
+local spinAngle=0
+local spinSavedRotation=nil
+local spinRoot=nil
+local function stopSpin()
+ local h=humanoid()
+ local r=spinRoot
+ if r and r.Parent and r==root() and h and h.Health>0 then
+  -- Ao parar, devolver a direcao de caminhada: nao deixar o avatar de costas.
+  local move=h.MoveDirection
+  local horizontal=Vector3.new(move.X,0,move.Z)
+  if horizontal.Magnitude>.05 then
+   r.CFrame=CFrame.lookAt(r.Position,r.Position+horizontal.Unit)
+  elseif spinSavedRotation then
+   r.CFrame=CFrame.new(r.Position)*spinSavedRotation
+  end
+  r.AssemblyAngularVelocity=Vector3.zero
+ end
+ if h and spinSavedAutoRotate~=nil then
+  h.AutoRotate=spinSavedAutoRotate
+  if h.Health>0 and not h.Sit and not settings.fly
+   and h.FloorMaterial~=Enum.Material.Air then
+   -- Forcar o Humanoid a retomar o estado locomotor normal apos o giro.
+   pcall(function() h:ChangeState(Enum.HumanoidStateType.Running) end)
+  end
+ end
+ spinSavedAutoRotate=nil
+ spinSavedRotation=nil
+ spinRoot=nil
+ spinAngle=0
+end
+section(pages.Principais,'SPIN | ANDAR GIRANDO')
+local setSpinToggle=toggle(pages.Principais,'Spin (andar girando)',false,function(v)
+ settings.spin=v
+ if v then
+  settings.fling=false
+  stopFling()
+  notify('SPIN ligado: pode andar e pular')
+ else
+  stopSpin()
+  notify('SPIN desligado')
+ end
+end)
+slider(pages.Principais,'Velocidade do Spin (graus/s)',0,10000,360,function(v)
+ settings.spinSpeed=v
+end)
+note(pages.Principais,'Spin gira o proprio boneco enquanto voce anda. Se o servidor corrigir a rotacao, o efeito pode nao aparecer para outros.')
+listen(Run.Heartbeat,function(dt)
+ if not alive or not settings.spin then return end
+ local h=humanoid()
+ local r=root()
+ if not h or not r or h.Health<=0 then return end
+ if spinRoot~=r then
+  spinSavedAutoRotate=h.AutoRotate
+  spinSavedRotation=r.CFrame.Rotation
+  spinRoot=r
+  spinAngle=0
+ end
+ h.AutoRotate=false
+ spinAngle=(spinAngle+math.rad(settings.spinSpeed)*math.min(dt,.1))%(math.pi*2)
+ local position=r.Position
+ local velocity=r.AssemblyLinearVelocity
+ r.CFrame=CFrame.new(position)*spinSavedRotation*CFrame.Angles(0,spinAngle,0)
+ r.AssemblyLinearVelocity=velocity
+end)
+section(pages.Principais,'FLING DE CONTATO | CONTROLE DO GIRO')
+toggle(pages.Principais,'Fling (girar ao encostar)',false,function(v)
+ settings.fling=v
+ if v then
+  settings.spin=false
+  stopSpin()
+  setSpinToggle(false)
+  -- Colisao deve estar ativa para um efeito fisico de contato.
+  settings.noclip=false
+  settings.clearNoclip()
+  settings.fly=false
+  stopFlyPhysics()
+  notify('FLING: giro local ativado. Outros jogadores dependem do servidor.')
+ else
+  stopFling()
+  notify('FLING desligado')
+ end
+end)
+slider(pages.Principais,'Forca do giro Fling',0,500,180,function(v)
+ settings.flingSpeed=v
+end)
+note(pages.Principais,'Fling tenta manter SEU personagem perto do piso enquanto gira. Nao prende nem controla outros jogadores; depende da fisica e do servidor.')
+local flingRayParams=RaycastParams.new()
+flingRayParams.FilterType=Enum.RaycastFilterType.Exclude
+flingRayParams.IgnoreWater=true
+listen(Run.Heartbeat,function(dt)
+ if not alive or not settings.fling then return end
+ local r=root()
+ local h=humanoid()
+ if not r or not h or h.Health<=0 then stopFling();return end
+ if flingRoot~=r or not flingAngular or not flingHeight then
+  stopFling()
+  flingRoot=r
+  flingSavedPlatformStand=h.PlatformStand
+  h.PlatformStand=true
+  flingAngular=Instance.new('BodyAngularVelocity')
+  flingAngular.Name='JS_FLING_GIRO_LOCAL'
+  flingAngular.MaxTorque=Vector3.new(0,1e8,0)
+  flingAngular.P=30000
+  flingAngular.Parent=r
+  flingHeight=Instance.new('BodyPosition')
+  flingHeight.Name='JS_FLING_ALTURA_LOCAL'
+  flingHeight.MaxForce=Vector3.new(0,1e7,0)
+  flingHeight.P=12000
+  flingHeight.D=1900
+  flingHeight.Position=r.Position
+  flingHeight.Parent=r
+ end
+ flingAngular.AngularVelocity=Vector3.new(0,settings.flingSpeed,0)
+ flingGroundClock=flingGroundClock+dt
+ if flingGroundClock>=.12 then
+  flingGroundClock=0
+  flingRayParams.FilterDescendantsInstances={character()}
+  local hit=workspace:Raycast(r.Position,Vector3.new(0,-18,0),flingRayParams)
+  if hit then
+   flingGroundY=hit.Position.Y+h.HipHeight+r.Size.Y*.5+.1
+  end
+ end
+ if flingGroundY then
+  -- MaxForce em X/Z e zero: mantem deslocamento lateral possivel.
+  flingHeight.Position=Vector3.new(r.Position.X,flingGroundY,r.Position.Z)
+ else
+  flingHeight.Position=r.Position
+ end
+end)
+toggle(pages.Principais,'Jump Power',false,function(v) settings.jump=v;applyMovement() end)
+slider(pages.Principais,'Altura do pulo',0,1000,85,function(v) settings.jumpValue=v;applyMovement() end)
+toggle(pages.Principais,'Infinite Jump',false,function(v) settings.infinity=v end)
+toggle(pages.Principais,'Noclip',false,function(v)
+ settings.noclip=v
+ if v then settings.refreshNoclip() else settings.clearNoclip() end
+ notify(v and 'Noclip local ligado (o servidor pode bloquear)' or 'Noclip desligado')
+end)
+section(pages.Principais,'PERSONAGEM')
+toggle(pages.Principais,'Gravidade personalizada',false,function(v) settings.customGravity=v;applyMovement() end)
+slider(pages.Principais,'Gravidade',0,196,110,function(v) settings.gravity=v;applyMovement() end)
+toggle(pages.Principais,'Modo fantasma (aparencia)',false,function(v)
+ settings.ghost=v
+ local c=character()
+ if c then
+  for _,p in ipairs(c:GetDescendants()) do
+   if p:IsA('BasePart') and p.Name~='HumanoidRootPart' then
+    if partTransparency[p]==nil then partTransparency[p]=p.LocalTransparencyModifier end
+    p.LocalTransparencyModifier=v and .55 or (partTransparency[p] or 0)
+   end
+  end
+ end
+ if not v then table.clear(partTransparency) end
+end)
+local function setInvisible(v)
+ invisOn=v
+ local c=character()
+ if c then
+  for _,part in ipairs(c:GetDescendants()) do
+   if part:IsA('BasePart') and part.Name~='HumanoidRootPart' then
+    if partTransparency[part]==nil then partTransparency[part]=part.LocalTransparencyModifier end
+    part.LocalTransparencyModifier=v and 1 or (settings.ghost and .55 or partTransparency[part] or 0)
+   elseif part:IsA('Decal') then
+    if partTransparency[part]==nil then partTransparency[part]=part.Transparency end
+    part.Transparency=v and 1 or partTransparency[part]
+   end
+  end
+ end
+end
+local setInvisToggle=toggle(pages.Principais,'Invisivel (somente local)',false,function(v)
+ setInvisible(v)
+ notify(v and 'Invisibilidade LOCAL ativada' or 'Invisibilidade desligada')
+end)
+button(pages.Principais,'Resetar personagem',function() local h=humanoid();if h then h.Health=0 end end)
+button(pages.Principais,'Sentar / Levantar',function() local h=humanoid();if h then h.Sit=not h.Sit end end)
+
+settings.espIgnoreAllies=false
+settings.espOnlyAlive=true  -- somente jogadores com vida > 0, ligado de inicio
+settings.espOnlyEnemies=false -- ligado: omite integrantes do seu time
+settings.espLineThickness=2  -- 1 a 6 pixels
+settings.espLineTransparency=0 -- 0 = opaco; 90 = quase invisivel
+settings.combatCounter=true -- contador inicia ligado automaticamente
+settings.combatRadius=185 -- pixels, sempre invisivel
+settings.espTextSize=12
+-- Se o jogo nao utiliza equipes, todos os outros jogadores sao potenciais adversarios.
+local function isAllyESP(plr)
+ local myTeam=LocalPlayer.Team
+ return myTeam~=nil and plr.Team~=nil and not LocalPlayer.Neutral
+  and not plr.Neutral and myTeam==plr.Team
+end
+local ownESP={box=false,skeleton=false,name=false,life=false,distance=false,highlight=false,rgb=false,thickness=2,textSize=12,rgbSpeed=25,brightness=100,maxDistance=5000}
+local function ownESPEnabled()
+ return ownESP.box or ownESP.skeleton or ownESP.name or ownESP.life or ownESP.distance or ownESP.highlight
+end
+local espGui, clearESP, updateESP
+do
+-- ===== JS X1TER | ESP SIMPLES R6 / R15 =====
+-- Verde: alvo visivel. Vermelho: alvo oculto por obstaculo.
+-- So altera o desenho local: nao modifica a visibilidade do servidor.
+-- Camada separada abaixo do menu (DisplayOrder 998, painel 999).
+espGui=make('ScreenGui',{
+ Name='VELOSO_MENU_ESP',ResetOnSpawn=false,IgnoreGuiInset=true,
+ DisplayOrder=998,ZIndexBehavior=Enum.ZIndexBehavior.Sibling
+},parent)
+local overlay=make('Frame',{
+ Size=UDim2.fromScale(1,1),BackgroundTransparency=1,BorderSizePixel=0,Visible=false
+},espGui)
+local C_AZUL=Color3.fromRGB(35,255,75)
+local C_VERMELHO=Color3.fromRGB(255,42,65)
+local C_VIDA=Color3.fromRGB(48,255,105)
+local C_LINHA=Color3.fromRGB(35,255,75)
+local C_PRETO=Color3.fromRGB(0,0,0)
+local C_BRANCO=Color3.fromRGB(255,255,255)
+
+local function espLineObj(holder,transparency)
+ return make('Frame',{
+  BackgroundColor3=C_AZUL,BackgroundTransparency=transparency or 0,
+  BorderSizePixel=0,Visible=false,AnchorPoint=Vector2.new(.5,.5),ZIndex=4
+ },holder)
+end
+local function espDrawSegment(obj,a,b,thick,col)
+ if not (a and b) then obj.Visible=false;return end
+ local d=b-a
+ local len=d.Magnitude
+ if len<1.1 or len>2500 then obj.Visible=false;return end
+ obj.Position=UDim2.fromOffset((a.X+b.X)*.5,(a.Y+b.Y)*.5)
+ obj.Size=UDim2.fromOffset(len,thick)
+ obj.Rotation=math.deg(math.atan2(d.Y,d.X))
+ if obj.BackgroundColor3~=col then obj.BackgroundColor3=col end
+ local opacity=math.clamp(settings.espLineTransparency/100,0,.9)
+ if obj.BackgroundTransparency~=opacity then obj.BackgroundTransparency=opacity end
+ obj.Visible=true
+end
+local function espTriple(parent)
+ -- Apenas UM segmento por linha: nenhum contorno preto nem linha duplicada.
+ return {core=espLineObj(parent,0)}
+end
+local function espHideTriple(tr)
+ if tr.core then tr.core.Visible=false end
+end
+local function espDrawTriple(tr,a,b,thick,col)
+ if not a or not b then espHideTriple(tr);return end
+ espDrawSegment(tr.core,a,b,math.max(1,thick),col)
+end
+local function espText(holder,fontSize)
+ return make('TextLabel',{
+  BackgroundTransparency=1,Text='',TextColor3=C_AZUL,
+  Font=Enum.Font.GothamBold,TextSize=fontSize,TextStrokeColor3=C_PRETO,
+  TextStrokeTransparency=.18,TextTruncate=Enum.TextTruncate.AtEnd,
+  BorderSizePixel=0,Visible=false
+ },holder)
+end
+local function espEntry(plr)
+ local old=espEntries[plr]
+ if old then return old end
+ local holder=make('Frame',{
+  Name='ESP_'..tostring(plr.UserId),Size=UDim2.fromScale(1,1),
+  BorderSizePixel=0,BackgroundTransparency=1,Visible=false
+ },overlay)
+ local e={frame=holder,box={},bones={},dots={},highlight=nil}
+ e.boxBackground=make('Frame',{Name='ESP_Box_Preto',BackgroundColor3=Color3.fromRGB(0,0,0),BackgroundTransparency=.55,BorderSizePixel=0,Visible=false,ZIndex=1},holder)
+ -- Segmentos sao criados apenas quando a funcao correspondente for ligada.
+ -- Assim ESP Nome nao instancia dezenas de linhas invisiveis por jogador.
+ e.tracer=nil
+ e.name=espText(holder,12)
+ e.range=espText(holder,11)
+ e.hpShadow=make('Frame',{
+  BackgroundColor3=C_PRETO,BackgroundTransparency=.12,BorderSizePixel=0,
+  Visible=false
+ },holder)
+ e.hpFill=make('Frame',{
+  BackgroundColor3=C_AZUL,BorderSizePixel=0,Visible=true,
+  AnchorPoint=Vector2.new(0,1),Position=UDim2.fromScale(0,1)
+ },e.hpShadow)
+ e.hpText=espText(holder,10)
+ -- Sem pontos nas articulacoes: somente segmentos limpos.
+ espEntries[plr]=e
+ return e
+end
+function clearESP()
+ for _,e in pairs(espEntries) do
+  pcall(function()
+   if e.highlight then e.highlight:Destroy();e.highlight=nil end
+   e.frame:Destroy()
+  end)
+ end
+ table.clear(espEntries)
+end
+local function anyESP()
+ return ownESPEnabled() or settings.espBox or settings.espLine or settings.espSkeleton
+  or settings.espName or settings.espLife or settings.espDistance
+  or settings.espHighlight
+end
+-- Evita uma nova lista de jogadores em toda atualizacao visual.
+local espPlayers=Players:GetPlayers()
+listen(Players.PlayerAdded,function(p)
+ espPlayers[#espPlayers+1]=p
+end)
+listen(Players.PlayerRemoving,function(p)
+ for i=#espPlayers,1,-1 do
+  if espPlayers[i]==p then table.remove(espPlayers,i);break end
+ end
+ local e=espEntries[p]
+ if e then
+  if e.highlight then e.highlight:Destroy() end
+  e.frame:Destroy();espEntries[p]=nil
+ end
+end)
+local function espProjected(world)
+ local cam=Camera or workspace.CurrentCamera
+ if not cam then return nil,0,false end
+ local v,on=cam:WorldToViewportPoint(world)
+ return Vector2.new(v.X,v.Y),v.Z,on
+end
+-- Mede a silhueta a partir da cabeca, tronco e pes do personagem real.
+-- Ignora acessorios e tamanho de colisoes alteradas para evitar boxes gigantes.
+local function espBounds(character)
+ local cam=Camera or workspace.CurrentCamera
+ local rp=character:FindFirstChild('HumanoidRootPart')
+ if not cam or not rp or not rp:IsA('BasePart') then return nil end
+ local head=character:FindFirstChild('Head')
+ local torso=character:FindFirstChild('UpperTorso') or character:FindFirstChild('Torso') or rp
+ if not torso:IsA('BasePart') then torso=rp end
+ local footL=character:FindFirstChild('LeftFoot') or character:FindFirstChild('Left Leg')
+ local footR=character:FindFirstChild('RightFoot') or character:FindFirstChild('Right Leg')
+ local headSize=head and head:IsA('BasePart') and (settings.espNaturalSizes[head] or head.Size)
+ local topY=headSize and head.Position.Y+headSize.Y*.55
+  or rp.Position.Y+2.9
+ local bottomY=rp.Position.Y-2.9
+ for _,foot in pairs({footL,footR}) do
+  if foot and foot:IsA('BasePart') then
+   bottomY=math.min(bottomY,foot.Position.Y-foot.Size.Y*.48)
+  end
+ end
+ if topY<=bottomY then topY=bottomY+4 end
+ local centerX=torso.Position.X
+ local centerZ=torso.Position.Z
+ -- Largura deriva da altura natural do rig, nao do Size local de uma hitbox.
+ local rigScale=math.clamp((topY-bottomY)/5.5,.6,1.8)
+ local width=math.clamp(3.4*rigScale,2.5,5.5)
+ local right=cam.CFrame.RightVector*(width*.5)
+ local topPoint=Vector3.new(centerX,topY,centerZ)
+ local bottomPoint=Vector3.new(centerX,bottomY,centerZ)
+ local points={topPoint-right,topPoint+right,bottomPoint-right,bottomPoint+right}
+ local x1,y1=math.huge,math.huge
+ local x2,y2=-math.huge,-math.huge
+ for _,pos in ipairs(points) do
+  local q=cam:WorldToViewportPoint(pos)
+  if q.Z<=.1 then return nil end
+  x1=math.min(x1,q.X);y1=math.min(y1,q.Y)
+  x2=math.max(x2,q.X);y2=math.max(y2,q.Y)
+ end
+ local cx,cy=(x1+x2)*.5,(y1+y2)*.5
+ local w=math.max(x2-x1,12)
+ local h=math.max(y2-y1,20)
+ local vp=cam.ViewportSize
+ if w>vp.X*1.5 or h>vp.Y*2 then return nil end
+ return cx-w*.5,cy-h*.5,cx+w*.5,cy+h*.5
+end
+
+-- Tres pontos evitam considerar um alvo escondido quando a cabeca
+-- esta coberta mas o tronco esta livre, ou vice-versa.
+local sightParams=RaycastParams.new()
+sightParams.FilterType=Enum.RaycastFilterType.Exclude
+sightParams.IgnoreWater=true
+-- O resultado de visibilidade nao muda de forma relevante a cada frame.
+-- Distribuir os raycasts ao longo dos frames evita picos que congelam todas
+-- as linhas do ESP de uma vez quando ha muitos jogadores.
+local MAX_ESP_RAYCAST_TARGETS_PER_FRAME=3
+local function espUnblocked(character,rootPart)
+ local cam=workspace.CurrentCamera
+ if not cam then return false end
+ local eye=cam.CFrame.Position
+ local excluded={}
+ if LocalPlayer.Character then table.insert(excluded,LocalPlayer.Character) end
+ sightParams.FilterDescendantsInstances=excluded
+ local candidates={character:FindFirstChild('Head'),character:FindFirstChild('UpperTorso') or character:FindFirstChild('Torso'),rootPart}
+ for _,part in ipairs(candidates) do
+  if part and part:IsA('BasePart') then
+   local travel=part.Position-eye
+   if travel.Magnitude<.15 then return true end
+   local hit=workspace:Raycast(eye,travel,sightParams)
+   if (not hit) or hit.Instance:IsDescendantOf(character) then return true end
+  end
+ end
+ return false
+end
+
+-- Pontos nos joints reais do R15 para nao criar um desenho torto
+-- usando somente o centro de cada braco/perna.
+local cachedRigParts=setmetatable({},{__mode='k'})
+local cachedRigAttachments=setmetatable({},{__mode='k'})
+local function cachedRigPart(c,name)
+ local cache=cachedRigParts[c]
+ if not cache then cache={};cachedRigParts[c]=cache end
+ local part=cache[name]
+ if part and part.Parent==c then return part end
+ part=c:FindFirstChild(name)
+ if part then cache[name]=part else cache[name]=nil end
+ return part
+end
+local function jointWorld(c,partName,attachName,fallbackOffset)
+ local part=cachedRigPart(c,partName)
+ if not part or not part:IsA('BasePart') then return nil end
+ local att=nil
+ if attachName then
+  local cache=cachedRigAttachments[part]
+  if not cache then cache={};cachedRigAttachments[part]=cache end
+  att=cache[attachName]
+  if not att or att.Parent~=part then
+   att=part:FindFirstChild(attachName)
+   cache[attachName]=att
+  end
+ end
+ if att and att:IsA('Attachment') then return att.WorldPosition end
+ return part.CFrame:PointToWorldSpace(fallbackOffset or Vector3.zero)
+end
+local R15_SEGMENTS={
+ {'head','neck'},{'neck','chest'},{'chest','waist'},{'waist','hips'},
+ {'chest','ls'},{'ls','le'},{'le','lw'},{'lw','lh'},
+ {'chest','rs'},{'rs','re'},{'re','rw'},{'rw','rh'},
+ {'hips','lhip'},{'lhip','lknee'},{'lknee','lankle'},{'lankle','lfoot'},
+ {'hips','rhip'},{'rhip','rknee'},{'rknee','rankle'},{'rankle','rfoot'}
+}
+local R6_SEGMENTS={
+ {'head','neck'},{'neck','hips'},
+ {'neck','ls'},{'ls','lh'},
+ {'neck','rs'},{'rs','rh'},
+ {'hips','lhip'},{'lhip','lfoot'},
+ {'hips','rhip'},{'rhip','rfoot'}
+}
+local function espJoints(character)
+ if cachedRigPart(character,'UpperTorso') then
+  local p={}
+  p.head=jointWorld(character,'Head',nil)
+  p.neck=jointWorld(character,'UpperTorso','NeckRigAttachment',Vector3.new(0,.35,0))
+  p.chest=jointWorld(character,'UpperTorso',nil)
+  p.waist=jointWorld(character,'LowerTorso','WaistRigAttachment',Vector3.new(0,.3,0))
+  p.hips=jointWorld(character,'LowerTorso',nil)
+  p.ls=jointWorld(character,'UpperTorso','LeftShoulderRigAttachment',Vector3.new(-.5,.3,0))
+  p.le=jointWorld(character,'LeftUpperArm','LeftElbowRigAttachment',Vector3.new(0,-.45,0))
+  p.lw=jointWorld(character,'LeftLowerArm','LeftWristRigAttachment',Vector3.new(0,-.4,0))
+  p.lh=jointWorld(character,'LeftHand',nil)
+  p.rs=jointWorld(character,'UpperTorso','RightShoulderRigAttachment',Vector3.new(.5,.3,0))
+  p.re=jointWorld(character,'RightUpperArm','RightElbowRigAttachment',Vector3.new(0,-.45,0))
+  p.rw=jointWorld(character,'RightLowerArm','RightWristRigAttachment',Vector3.new(0,-.4,0))
+  p.rh=jointWorld(character,'RightHand',nil)
+  p.lhip=jointWorld(character,'LowerTorso','LeftHipRigAttachment',Vector3.new(-.25,-.35,0))
+  p.lknee=jointWorld(character,'LeftUpperLeg','LeftKneeRigAttachment',Vector3.new(0,-.45,0))
+  p.lankle=jointWorld(character,'LeftLowerLeg','LeftAnkleRigAttachment',Vector3.new(0,-.4,0))
+  p.lfoot=jointWorld(character,'LeftFoot',nil)
+  p.rhip=jointWorld(character,'LowerTorso','RightHipRigAttachment',Vector3.new(.25,-.35,0))
+  p.rknee=jointWorld(character,'RightUpperLeg','RightKneeRigAttachment',Vector3.new(0,-.45,0))
+  p.rankle=jointWorld(character,'RightLowerLeg','RightAnkleRigAttachment',Vector3.new(0,-.4,0))
+  p.rfoot=jointWorld(character,'RightFoot',nil)
+  return p,R15_SEGMENTS
+ end
+ local torso=cachedRigPart(character,'Torso')
+ if not torso or not torso:IsA('BasePart') then return {},R6_SEGMENTS end
+ local size=settings.espNaturalSizes[torso] or torso.Size
+ local p={}
+ p.head=jointWorld(character,'Head',nil)
+ p.neck=torso.CFrame:PointToWorldSpace(Vector3.new(0,size.Y*.48,0))
+ p.hips=torso.CFrame:PointToWorldSpace(Vector3.new(0,-size.Y*.43,0))
+ p.ls=jointWorld(character,'Left Arm',nil,Vector3.new(0,.4,0))
+ p.lh=jointWorld(character,'Left Arm',nil,Vector3.new(0,-.4,0))
+ p.rs=jointWorld(character,'Right Arm',nil,Vector3.new(0,.4,0))
+ p.rh=jointWorld(character,'Right Arm',nil,Vector3.new(0,-.4,0))
+ p.lhip=jointWorld(character,'Left Leg',nil,Vector3.new(0,.4,0))
+ p.lfoot=jointWorld(character,'Left Leg',nil,Vector3.new(0,-.4,0))
+ p.rhip=jointWorld(character,'Right Leg',nil,Vector3.new(0,.4,0))
+ p.rfoot=jointWorld(character,'Right Leg',nil,Vector3.new(0,-.4,0))
+ return p,R6_SEGMENTS
+end
+local function espHideParts(e)
+ if e.highlight then e.highlight.Enabled=false end
+ if e.boxBackground then e.boxBackground.Visible=false end
+ for _,seg in pairs(e.box) do espHideTriple(seg) end
+ for _,seg in pairs(e.bones) do espHideTriple(seg) end
+ if e.tracer then espHideTriple(e.tracer) end
+ for _,dot in ipairs(e.dots) do dot.Visible=false end
+ e.name.Visible=false;e.range.Visible=false
+ e.hpShadow.Visible=false;e.hpText.Visible=false
+end
+-- ESP MY compartilha EXATAMENTE os componentes e calculos 2D do ESP Jogador.
+-- A unica diferenca e a origem: LocalPlayer, sem tracer/linha.
+local ownLastCharacter=nil
+local ownHue=0
+local function renderOwnESP()
+ local plr=LocalPlayer
+ local char=plr.Character
+ local h=char and char:FindFirstChildOfClass('Humanoid')
+ local r=char and char:FindFirstChild('HumanoidRootPart')
+ local e=espEntries[plr]
+ if not ownESPEnabled() or not char or not h or h.Health<=0 or not r then
+  if e then
+   espHideParts(e);e.frame.Visible=false
+   if e.highlight then e.highlight.Enabled=false end
+  end
+  return
+ end
+ if not e then e=espEntry(plr) end
+ if ownLastCharacter~=char then
+  espHideParts(e)
+  if e.highlight then e.highlight:Destroy();e.highlight=nil end
+  ownLastCharacter=char
+ end
+ local cam=workspace.CurrentCamera
+ if cam and (cam.CFrame.Position-r.Position).Magnitude*.28>ownESP.maxDistance then
+  espHideParts(e);e.frame.Visible=false;return
+ end
+ local left,top,right,bottom=espBounds(char)
+ if not left then espHideParts(e);e.frame.Visible=false;return end
+ local height=bottom-top
+ local midX=(left+right)*.5
+ local color=ownESP.rgb and Color3.fromHSV((os.clock()*ownESP.rgbSpeed/180)%1,1,1) or C_AZUL
+ local alpha=1-ownESP.brightness/100
+ e.frame.Visible=true
+ -- Limpa elementos desligados; nao cria linhas nem marca jogadores ficticios.
+ espHideParts(e)
+ if ownESP.box then
+  local corners={
+   {Vector2.new(left,top),Vector2.new(right,top)},
+   {Vector2.new(right,top),Vector2.new(right,bottom)},
+   {Vector2.new(right,bottom),Vector2.new(left,bottom)},
+   {Vector2.new(left,bottom),Vector2.new(left,top)}
+  }
+  for i=1,4 do
+   if not e.box[i] then e.box[i]=espTriple(e.frame) end
+   espDrawTriple(e.box[i],corners[i][1],corners[i][2],ownESP.thickness,color)
+   e.box[i].core.BackgroundTransparency=alpha
+  end
+ end
+ if ownESP.highlight then
+  if not e.highlight or not e.highlight.Parent then
+   local hl=Instance.new('Highlight')
+   hl.Name='KIRA_ESP_MY_Highlight'
+   hl.Adornee=char
+   hl.DepthMode=Enum.HighlightDepthMode.AlwaysOnTop
+   hl.Parent=char
+   e.highlight=hl
+  end
+  e.highlight.FillColor=color
+  e.highlight.OutlineColor=color
+  e.highlight.FillTransparency=.75
+  e.highlight.OutlineTransparency=alpha
+  e.highlight.Enabled=true
+ end
+ if ownESP.name then
+  e.name.Visible=true;e.name.Text=plr.DisplayName
+  e.name.TextColor3=color;e.name.TextSize=ownESP.textSize
+  e.name.Size=UDim2.fromOffset(math.max(70,math.min(185,right-left+40)),18)
+  e.name.Position=UDim2.fromOffset(midX-e.name.Size.X.Offset*.5,top-20)
+ end
+ if ownESP.distance then
+  local cam=workspace.CurrentCamera
+  local meters=cam and (cam.CFrame.Position-r.Position).Magnitude*.28 or 0
+  e.range.Visible=true;e.range.Text=tostring(math.floor(meters+.5))..'m'
+  e.range.TextColor3=color;e.range.TextSize=ownESP.textSize
+  e.range.Position=UDim2.fromOffset(midX-45,bottom+2)
+  e.range.Size=UDim2.fromOffset(90,16)
+ end
+ if ownESP.life then
+  local hp=math.clamp(h.Health/math.max(h.MaxHealth,1),0,1)
+  local barW=math.clamp(height/42,2,4)
+  local barH=math.max(8,height-2)
+  local gap=math.clamp(height/100,2,3)
+  local bx=left-gap-barW
+  e.hpShadow.Visible=true
+  e.hpShadow.BackgroundColor3=Color3.fromRGB(12,42,22)
+  e.hpShadow.Position=UDim2.fromOffset(bx,top+(height-barH)*.5)
+  e.hpShadow.Size=UDim2.fromOffset(barW,barH)
+  e.hpFill.BackgroundColor3=C_VIDA
+  e.hpFill.Size=UDim2.fromScale(1,hp)
+  if height>=65 then
+   e.hpText.Visible=true
+   e.hpText.Text=tostring(math.floor(h.Health+.5))
+   e.hpText.TextColor3=C_VIDA
+   e.hpText.Position=UDim2.fromOffset(bx-15,top-15)
+   e.hpText.Size=UDim2.fromOffset(35,14)
+  end
+ end
+ if ownESP.skeleton and height>=18 then
+  local joints,segments=espJoints(char)
+  local projected={}
+  for key,w in pairs(joints) do
+   local vec,z=espProjected(w)
+   if vec and z>.1 then projected[key]=vec end
+  end
+  for i,pair in ipairs(segments) do
+   local a,b=projected[pair[1]],projected[pair[2]]
+   if a and b and (b-a).Magnitude<=math.max(35,height*1.15) then
+    if not e.bones[i] then e.bones[i]=espTriple(e.frame) end
+    espDrawTriple(e.bones[i],a,b,ownESP.thickness,color)
+    e.bones[i].core.BackgroundTransparency=alpha
+   end
+  end
+ end
+end
+function updateESP()
+ Camera=workspace.CurrentCamera
+ if not Camera or not overlay.Parent then return end
+ overlay.Visible=anyESP()
+ if not overlay.Visible then
+  for _,e in pairs(espEntries) do
+   e.frame.Visible=false
+   if e.highlight then e.highlight.Enabled=false end
+  end
+  return
+ end
+ local vp=Camera.ViewportSize
+ local source=Vector2.new(vp.X*.5,vp.Y*.5)
+ if settings.espLineSource=='Topo' then source=Vector2.new(vp.X*.5,0) end
+ if settings.espLineSource=='Baixo' then source=Vector2.new(vp.X*.5,vp.Y) end
+ local cyan=settings.espRGB and Color3.fromHSV((os.clock()*.14)%1,1,1) or C_AZUL
+ local ownRoot=root()
+ local needsVisibility=settings.espLine or settings.espSkeleton or settings.espHighlight
+  or settings.espName or settings.espDistance or settings.espLife
+ local remainingRaycastTargets=MAX_ESP_RAYCAST_TARGETS_PER_FRAME
+ local activeFlags=(settings.espBox and 1 or 0)+(settings.espLine and 2 or 0)
+  +(settings.espSkeleton and 4 or 0)+(settings.espName and 8 or 0)
+  +(settings.espLife and 16 or 0)+(settings.espDistance and 32 or 0)
+  +(settings.espHighlight and 64 or 0)
+ local now=os.clock()
+ local playerESPActive=settings.espBox or settings.espLine or settings.espSkeleton or settings.espName or settings.espLife or settings.espDistance or settings.espHighlight
+ if playerESPActive then
+ for _,plr in ipairs(espPlayers) do
+  if plr~=LocalPlayer then
+   local e=espEntries[plr]
+   local character=plr.Character
+   if e and not e.frame.Parent then
+    if e.highlight then e.highlight:Destroy() end
+    espEntries[plr]=nil
+    e=nil
+   end
+   if e and e.character~=character then
+    espHideParts(e)
+    if e.highlight then e.highlight:Destroy();e.highlight=nil end
+    e.character=character
+    e.visibilityAt=nil
+    e.visibilityResult=false
+   end
+   local humanoid=character and character:FindFirstChildOfClass('Humanoid')
+   local targetRoot=character and character:FindFirstChild('HumanoidRootPart')
+   -- Distancias internas de Roblox estao em studs; 1 stud ~= 0.28 metro.
+   local distance=(ownRoot and targetRoot) and (ownRoot.Position-targetRoot.Position).Magnitude or math.huge
+   local distanceMeters=distance*0.28
+   local center,depth,inView
+   if targetRoot then center,depth,inView=espProjected(targetRoot.Position) end
+   -- O ESP so aparece dentro do alcance escolhido (0 a 5000 metros).
+   -- 'inView' e profundidade positiva evitam desenhar atras da camera.
+   local enabled=targetRoot and humanoid and inView and depth>0
+       and distanceMeters<=settings.espMax
+       and (not settings.espOnlyAlive or humanoid.Health>0)
+       and (not settings.espOnlyEnemies or not isAllyESP(plr))
+       and (not settings.espIgnoreAllies or not isAllyESP(plr))
+   if enabled and not e then e=espEntry(plr);e.character=character end
+   if e then
+    e.frame.Visible=not not enabled
+    if not enabled and e.highlight then e.highlight.Enabled=false end
+   end
+   if enabled and e then
+    local left,top,right,bottom=espBounds(character)
+    if not left then
+     e.frame.Visible=false
+     if e.highlight then e.highlight.Enabled=false end
+    else
+     -- Ocultar todas as pecas apenas quando as funcoes mudarem.
+     -- Desligar e religar cada linha a 45 FPS causava custo e tremedeira.
+     if e.activeFlags~=activeFlags then
+      espHideParts(e)
+      e.activeFlags=activeFlags
+     end
+     local height=bottom-top
+     local midX=(left+right)*.5
+     local visible=true
+     if needsVisibility then
+      -- Limite por frame + cache impedem que todos os jogadores disparem
+      -- raycasts no mesmo frame. As posicoes continuam atualizadas normalmente.
+      if remainingRaycastTargets>0 and
+        (e.visibilityAt==nil or e.visibilityCharacter~=character or now-e.visibilityAt>=.27) then
+       e.visibilityResult=espUnblocked(character,targetRoot)
+       e.visibilityAt=now
+       e.visibilityCharacter=character
+       remainingRaycastTargets=remainingRaycastTargets-1
+      end
+      visible=e.visibilityResult==true
+     end
+     local color=settings.espRGB and cyan or (visible and C_AZUL or C_VERMELHO)
+     -- Highlight nativo segue o personagem REAL e respeita paredes.
+     -- Uma instancia por alvo, criada apenas quando a opcao estiver ligada.
+     if settings.espHighlight then
+      local hl=e.highlight
+      if not hl or not hl.Parent then
+       hl=Instance.new('Highlight')
+       hl.Name='VELOSO_ESP_Highlight'
+       hl.DepthMode=Enum.HighlightDepthMode.AlwaysOnTop
+       hl.FillTransparency=.78
+       hl.OutlineTransparency=.12
+       hl.Adornee=character
+       hl.Parent=character
+       e.highlight=hl
+      end
+      hl.FillColor=color
+      hl.OutlineColor=color
+      hl.Enabled=true
+     elseif e.highlight then
+      e.highlight.Enabled=false
+     end
+     -- Box, nome, vida e linha respeitam o alcance configurado.
+     -- Esqueleto so evita tracar detalhes ilegíveis se projetado em pouquissimos
+     -- pixels, sem depender da distancia configurada nem fazer quadradinhos.
+     local detailed=height>=18
+     local thickness=math.clamp(height/170,1,2.1)*(settings.espLineThickness/2)
+     -- Linhas simples, sem halo ou camada extra de brilho.
+     if settings.espBox then
+      -- Box so com quatro linhas finas; sem preenchimento preto.
+      e.boxBackground.Visible=false
+      local corners={
+       {Vector2.new(left,top),Vector2.new(right,top)},
+       {Vector2.new(right,top),Vector2.new(right,bottom)},
+       {Vector2.new(right,bottom),Vector2.new(left,bottom)},
+       {Vector2.new(left,bottom),Vector2.new(left,top)}
+      }
+      for i=1,4 do
+       if not e.box[i] then e.box[i]=espTriple(e.frame) end
+       espDrawTriple(e.box[i],corners[i][1],corners[i][2],settings.espLineThickness,C_BRANCO)
+      end
+     end
+     -- Toda linha parte do ponto central escolhido e termina no alvo.
+     -- Ocultar fora do alcance configurado e feito antes de desenhar.
+     if settings.espLine then
+      if not e.tracer then e.tracer=espTriple(e.frame) end
+      espDrawTriple(e.tracer,source,Vector2.new(midX,top+height*.35),math.max(1,settings.espLineThickness*.68),color)
+     end
+     if settings.espName then
+      e.name.Visible=true
+      e.name.Text=plr.DisplayName
+      e.name.TextColor3=color
+      e.name.TextSize=height<32 and math.max(8,settings.espTextSize-2) or settings.espTextSize
+      e.name.Size=UDim2.fromOffset(math.max(70,math.min(185,right-left+40)),18)
+      e.name.Position=UDim2.fromOffset(midX-e.name.Size.X.Offset*.5,top-20)
+     end
+     if settings.espDistance then
+      e.range.Visible=true
+      e.range.Text=tostring(math.floor(distanceMeters+.5))..'m'
+      e.range.TextColor3=color
+      e.range.Position=UDim2.fromOffset(midX-45,bottom+2)
+      e.range.Size=UDim2.fromOffset(90,16)
+     end
+     if settings.espLife then
+      -- Barra de vida: tamanho real proporcional a Health/MaxHealth.
+      local hp=math.clamp(humanoid.Health/math.max(humanoid.MaxHealth,1),0,1)
+      -- Vida SEMPRE colada na borda esquerda da MESMA box, de perto
+      -- ou de longe. Nenhum deslocamento fixo de 10 pixels.
+      local barW=math.clamp(height/42,2,4)
+      local barH=math.max(8,height-2)
+      local gap=math.clamp(height/100,2,3)
+      local bx=left-gap-barW
+      local by=top+(height-barH)*.5
+      e.hpShadow.Visible=true
+      e.hpShadow.BackgroundColor3=Color3.fromRGB(12,42,22)
+      e.hpShadow.Position=UDim2.fromOffset(bx,by)
+      e.hpShadow.Size=UDim2.fromOffset(barW,barH)
+      e.hpFill.BackgroundColor3=C_VIDA
+      e.hpFill.Size=UDim2.fromScale(1,hp)
+      if height>=65 then
+       e.hpText.Visible=true
+       e.hpText.Text=tostring(math.floor(humanoid.Health+.5))
+       e.hpText.TextColor3=C_VIDA
+       e.hpText.Position=UDim2.fromOffset(bx-15,top-15)
+       e.hpText.Size=UDim2.fromOffset(35,14)
+      else
+       e.hpText.Visible=false
+      end
+     end
+     if settings.espSkeleton and detailed then
+      local joints,segments=espJoints(character)
+      local projected={}
+      for key,w in pairs(joints) do
+       local vec,z=espProjected(w)
+       if vec and z>.1 then projected[key]=vec end
+      end
+      for i,pair in ipairs(segments) do
+       local a,b=projected[pair[1]],projected[pair[2]]
+       -- Nao desenhar uma linha artificial atraves da tela caso haja erro de rig.
+       if a and b and (b-a).Magnitude<=math.max(35,height*1.15) then
+        if not e.bones[i] then e.bones[i]=espTriple(e.frame) end
+        espDrawTriple(e.bones[i],a,b,thickness,color)
+       elseif e.bones[i] then
+        espHideTriple(e.bones[i])
+       end
+      end
+     elseif e.lastSkeletonDetailed then
+      for _,seg in pairs(e.bones) do espHideTriple(seg) end
+     end
+     e.lastSkeletonDetailed=settings.espSkeleton and detailed
+    end
+   end
+  end
+ end
+ end -- encerra iteracao dos outros jogadores quando apenas ESP MY esta ativo
+ renderOwnESP()
+ for plr,e in pairs(espEntries) do
+  if not plr.Parent then
+   if e.highlight then e.highlight:Destroy() end
+   e.frame:Destroy();espEntries[plr]=nil
+  end
+ end
+end
+section(pages.ESP,'VISUALIZACAO DE JOGADORES')
+note(pages.ESP,'Opcoes reais do seu cliente, organizadas em duas colunas para PC.')
+-- Painel ESP em grade 2x4, como o novo conceito, preservando as keys
+-- anteriores: a grade usa o mesmo nome da pagina para pref.start().
+local espGrid=make('Frame',{
+ Name='ESP',Size=UDim2.new(1,0,0,198),BackgroundTransparency=1,
+ BorderSizePixel=0,LayoutOrder=nextOrder(pages.ESP)
+},pages.ESP)
+make('UIGridLayout',{
+ SortOrder=Enum.SortOrder.LayoutOrder,
+ CellSize=UDim2.new(.5,-7,0,43),
+ CellPadding=UDim2.fromOffset(12,8),
+ FillDirection=Enum.FillDirection.Horizontal,
+ FillDirectionMaxCells=2
+},espGrid)
+local function espSwitch(label,key)
+ toggle(espGrid,label,false,function(enabled) settings[key]=enabled end)
+end
+espSwitch('ESP Highlight','espHighlight')
+espSwitch('ESP Box','espBox')
+espSwitch('ESP Linha','espLine')
+espSwitch('ESP Esqueleto R6 / R15','espSkeleton')
+espSwitch('ESP Nome','espName')
+espSwitch('ESP Vida verde','espLife')
+espSwitch('ESP Metros','espDistance')
+espSwitch('ESP RGB','espRGB')
+section(pages.ESP,'AJUSTES DE APARENCIA')
+slider(pages.ESP,'Espessura das linhas',1,6,2,function(v)
+ settings.espLineThickness=v
+end)
+moveLastEspControl('ESP')
+slider(pages.ESP,'Transparencia das linhas (%)',0,90,0,function(v)
+ settings.espLineTransparency=v
+end)
+moveLastEspControl('ESP')
+slider(pages.ESP,'Tamanho do texto ESP',8,20,12,function(v)
+ settings.espTextSize=v
+end)
+moveLastEspControl('ESP')
+slider(pages.ESP,'Alcance maximo ESP (metros)',0,5000,5000,function(v)
+ settings.espMax=v
+ -- O loop de ESP aplica este limite ao Box, Linha, Nome, Vida e Esqueleto.
+end)
+moveLastEspControl('ESP')
+section(pages.ESP,'FILTROS DO ESP')
+toggle(pages.ESP,'ESP somente vivos',true,function(v)
+ settings.espOnlyAlive=v
+end)
+moveLastEspControl('ESP')
+toggle(pages.ESP,'ESP somente inimigos',false,function(v)
+ settings.espOnlyEnemies=v
+end)
+moveLastEspControl('ESP')
+note(pages.ESP,'Somente inimigos usa as equipes do jogo. Se nao houver equipes, mostra todos os outros jogadores.')
+
+local linePrefKey,lineStored=settings.pref.start(pages.ESP,'Origem da linha',settings.espLineSource)
+if lineStored=='Centro' or lineStored=='Topo' or lineStored=='Baixo' then
+ settings.espLineSource=lineStored
+end
+local lineSourceButton=button(pages.ESP,'Origem da linha: '..settings.espLineSource,function(b)
+ local opts={'Centro','Topo','Baixo'}
+ for i,v in ipairs(opts) do
+  if v==settings.espLineSource then settings.espLineSource=opts[i%#opts+1];break end
+ end
+ b.Text='Origem da linha: '..settings.espLineSource
+ settings.pref.set(linePrefKey,settings.espLineSource)
+end)
+moveEspSetting('ESP',lineSourceButton)
+settings.pref.register(linePrefKey,function()
+ lineSourceButton.Text='Origem da linha: '..settings.espLineSource
+end)
+note(pages.ESP,'O alcance vai de 0 a 5000 metros (aproximados). Em 0, o ESP de jogadores fica oculto; streaming pode limitar distancias grandes.')
+note(pages.ESP,'O ESP e renderizado apenas na sua tela. A deteccao azul/vermelho e estimada pela geometria que seu cliente consegue consultar.')
+
+end -- fim do escopo ESP: evita limite de variaveis locais no Lua
+-- ===== CAMERA & MIRA =====
+local crossh=make('Frame',{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(4,4),BackgroundColor3=COLOR.white,Visible=false},gui)
+local function onCamFov(v)
+ settings.cameraFov=v
+ Camera=workspace.CurrentCamera
+ if Camera then Camera.FieldOfView=v end
+end
+-- ===== HITBOX CORRIGIDO: IGNORA MORTOS E RECONHECE RESPAWN =====
+-- Efeito local: nao substitui verificacao de tiros feita pelo servidor.
+settings.hitboxHead=false
+settings.hitboxBody=false
+settings.hitboxHeadSize=6
+settings.hitboxBodySize=8
+settings.hitboxIgnoreTeam=true -- protecao de aliados sempre ligada
+settings.hitboxMaxDistance=900
+settings.hitboxShow=true
+settings.hitboxColor=Color3.fromRGB(0,0,0)
+settings.hitboxTransparency=0 -- preto solido; slider controla de 0 a 100
+
+-- Anel FOV da Hitbox: apenas interface 2D (nao altera cameras nem tiros).
+settings.hitboxFovGui=make('Frame',{
+ Name='JS_HITBOX_FOV',BackgroundTransparency=1,BorderSizePixel=0,
+ AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),
+ Size=UDim2.fromOffset(290,290),Visible=false,ZIndex=3,Active=false
+},gui)
+make('UICorner',{CornerRadius=UDim.new(1,0)},settings.hitboxFovGui)
+settings.hitboxFovStroke=make('UIStroke',{
+ Thickness=settings.hitboxFovThickness,Color=settings.hitboxFovColor,Transparency=0,ApplyStrokeMode=Enum.ApplyStrokeMode.Border
+},settings.hitboxFovGui)
+settings.updateFovRing=function()
+ local diam=settings.hitboxFovRadius*2
+ settings.hitboxFovGui.Size=UDim2.fromOffset(diam,diam)
+ settings.hitboxFovGui.Visible=settings.hitboxFovVisible
+ settings.hitboxFovStroke.Thickness=settings.hitboxFovThickness
+ if not settings.hitboxFovRGB then settings.hitboxFovStroke.Color=settings.hitboxFovColor end
+end
+local hitboxOriginal={}
+-- Um adorno 3D independente da textura do personagem: a cor e a opacidade
+-- continuam visiveis mesmo quando uma roupa/mesh ignora a cor da BasePart.
+local hitboxVisual={}
+local headVisualOriginal={}
+local function restoreHeadVisual(part)
+ local saved=headVisualOriginal[part]
+ if not saved then return end
+ pcall(function()
+  if part and part.Parent then
+   part.Material=saved.Material
+   part.Reflectance=saved.Reflectance
+   if part:IsA('MeshPart') then part.TextureID=saved.TextureID end
+  end
+  for child,properties in pairs(saved.Children) do
+   if child and child.Parent then
+    if properties.Transparency~=nil then child.Transparency=properties.Transparency end
+    if properties.TextureId~=nil then child.TextureId=properties.TextureId end
+   end
+  end
+ end)
+ headVisualOriginal[part]=nil
+end
+local function blackenHeadVisual(part)
+ if not headVisualOriginal[part] then
+  local saved={Material=part.Material,Reflectance=part.Reflectance,Children={}}
+  if part:IsA('MeshPart') then saved.TextureID=part.TextureID end
+  headVisualOriginal[part]=saved
+ end
+ local saved=headVisualOriginal[part]
+ pcall(function()
+  part.Material=Enum.Material.SmoothPlastic
+  part.Reflectance=0
+  if part:IsA('MeshPart') then part.TextureID='' end
+  for _,child in ipairs(part:GetDescendants()) do
+   if child:IsA('Decal') or child:IsA('Texture') then
+    if not saved.Children[child] then saved.Children[child]={Transparency=child.Transparency} end
+    child.Transparency=1
+   elseif child:IsA('SpecialMesh') then
+    if not saved.Children[child] then saved.Children[child]={TextureId=child.TextureId} end
+    child.TextureId=''
+   end
+  end
+ end)
+end
+local function restoreOneHitbox(part,old)
+ local visual=hitboxVisual[part]
+ if visual then visual:Destroy();hitboxVisual[part]=nil end
+ restoreHeadVisual(part)
+ if part and part.Parent then
+  pcall(function()
+   part.Size=old.Size
+   if old.MeshScales then
+    for mesh,scale in pairs(old.MeshScales) do
+     if mesh and mesh.Parent then mesh.Scale=scale end
+    end
+   end
+   part.Transparency=old.Transparency
+   part.LocalTransparencyModifier=old.LocalTransparencyModifier
+   part.CanCollide=old.CanCollide
+   part.CanTouch=old.CanTouch
+   part.CanQuery=old.CanQuery
+   part.Massless=old.Massless
+   part.Color=old.Color
+  end)
+ end
+ hitboxOriginal[part]=nil
+ settings.espNaturalSizes[part]=nil
+end
+local function restoreHitboxes()
+ for part,old in pairs(hitboxOriginal) do restoreOneHitbox(part,old) end
+end
+local function setHitboxPart(part,size,isHead)
+ if not part or not part:IsA('BasePart') then return false end
+ if not hitboxOriginal[part] then
+  hitboxOriginal[part]={Size=part.Size,Transparency=part.Transparency,
+   LocalTransparencyModifier=part.LocalTransparencyModifier,
+   CanCollide=part.CanCollide,CanTouch=part.CanTouch,
+   CanQuery=part.CanQuery,Massless=part.Massless,Color=part.Color,MeshScales={}}
+  if isHead then
+   for _,mesh in ipairs(part:GetChildren()) do
+    if mesh:IsA('SpecialMesh') and (mesh.MeshType==Enum.MeshType.Head
+      or mesh.MeshType==Enum.MeshType.FileMesh) then
+     hitboxOriginal[part].MeshScales[mesh]=mesh.Scale
+    end
+   end
+  end
+ end
+ local original=hitboxOriginal[part]
+ settings.espNaturalSizes[part]=original.Size
+ -- Cresce mantendo a proporcao da cabeca original (R6 ou R15).
+ -- Nao substitui a cabeca por cubo nem cria esfera artificial.
+ local factor=isHead and (size/math.max(original.Size.X,original.Size.Y,original.Size.Z)) or 1
+ local target=isHead and (original.Size*factor)
+  or Vector3.new(size,size,math.max(2,size*.7))
+ local ok=pcall(function()
+  if part.Size~=target then part.Size=target end
+  if isHead then
+   for mesh,originalScale in pairs(original.MeshScales) do
+    if mesh and mesh.Parent then
+     local scaled=originalScale*factor
+     if mesh.Scale~=scaled then mesh.Scale=scaled end
+    end
+   end
+  end
+  if part.CanCollide then part.CanCollide=false end
+  -- Nao desliga CanTouch: alguns jogos usam eventos Touched para golpes.
+  if part.CanTouch~=hitboxOriginal[part].CanTouch then part.CanTouch=hitboxOriginal[part].CanTouch end
+  if not part.CanQuery then part.CanQuery=true end
+  if not part.Massless then part.Massless=true end
+  -- A cabeca mostra sua propria silhueta, sem bola ou caixa falsa.
+  -- O corpo continua usando um adorno retangular.
+  local opacity=math.clamp(settings.hitboxTransparency/100,0,1)
+  -- Sem isso a barra alterava apenas o adorno, mas a cabeca/corpo
+  -- aumentado continuava opaco; por isso parecia que nao funcionava.
+  -- Nao depende da camera ou de raycast: a marcacao nao pisca quando
+  -- o alvo passa atras de uma parede.
+  part.LocalTransparencyModifier=math.max(original.LocalTransparencyModifier or 0,opacity)
+  local visual=hitboxVisual[part]
+  if not visual or not visual.Parent then
+   visual=Instance.new(isHead and 'Highlight' or 'BoxHandleAdornment')
+   visual.Name='VELOSO_Hitbox_Visual'
+   visual.Adornee=part
+   if isHead then
+    visual.DepthMode=Enum.HighlightDepthMode.AlwaysOnTop
+    visual.OutlineTransparency=1
+   else
+    visual.AlwaysOnTop=true
+    visual.ZIndex=2
+   end
+   visual.Parent=gui
+   hitboxVisual[part]=visual
+  end
+  if isHead then
+   visual.Enabled=settings.hitboxShow and opacity<1
+   visual.FillColor=settings.hitboxColor
+   visual.FillTransparency=opacity
+  else
+   visual.Size=target
+   visual.Visible=settings.hitboxShow and opacity<1
+   visual.Color3=settings.hitboxColor
+   visual.Transparency=opacity
+  end
+ end)
+ return ok
+end
+-- Atualiza a transparencia na hora, sem varrer todos os jogadores nem fazer
+-- raycasts enquanto o usuario arrasta o slider. Funciona de 0 a 100%.
+local function updateHitboxOpacity()
+ local opacity=math.clamp(settings.hitboxTransparency/100,0,1)
+ for part,visual in pairs(hitboxVisual) do
+  local original=hitboxOriginal[part]
+  if original and part and part.Parent then
+   pcall(function()
+    part.LocalTransparencyModifier=math.max(original.LocalTransparencyModifier or 0,opacity)
+   end)
+  end
+  if visual and visual.Parent then
+   if visual:IsA('Highlight') then
+    visual.FillTransparency=opacity
+    visual.Enabled=settings.hitboxShow and opacity<1
+   else
+    visual.Transparency=opacity
+    visual.Visible=settings.hitboxShow and opacity<1
+   end
+  end
+ end
+end
+-- HITBOX V13: reconhece o jogador caido, mesmo quando o jogo nao zera a vida.
+-- Usa o estado fisico do Humanoid, orientacao do torax e proximidade com o chao.
+-- Evita confundir pulo, inclinacao rapida ou personagem sentado com nocaute.
+local function flagCaido(c,hum)
+ for _,name in ipairs({'Ragdolled','IsRagdolled','Ragdoll','Knocked','KnockedOut','Downed','IsDowned','IsKnocked','Unconscious'}) do
+  local attribute=c:GetAttribute(name)
+  if attribute==true then return true end
+  local value=c:FindFirstChild(name) or hum:FindFirstChild(name)
+  if value and value:IsA('BoolValue') and value.Value then return true end
+ end
+ return false
+end
+local function isCharacterDownForHitbox(c,hum,rootPart)
+ local state=hum:GetState()
+ if state==Enum.HumanoidStateType.Dead
+  or state==Enum.HumanoidStateType.Ragdoll
+  or state==Enum.HumanoidStateType.FallingDown then
+  return true
+ end
+ if flagCaido(c,hum) then return true end
+ -- Nao usa inclinacao do torso como prova de queda: animacoes, veiculos e
+ -- troca de rodada podem inclinar o rig por um instante e esconder a hitbox.
+ return false
+end
+local function isAliveForHitbox(c)
+ if not c or not c.Parent then return false end
+ local hum=c:FindFirstChildOfClass('Humanoid')
+ local rootPart=c:FindFirstChild('HumanoidRootPart')
+ if not hum or not rootPart or not rootPart:IsA('BasePart') then return false end
+ if hum.Health<=0 then return false end
+ if isCharacterDownForHitbox(c,hum,rootPart) then return false end
+ return true,rootPart
+end
+local function restoreCharacterHitbox(c)
+ if not c then return end
+ for part,old in pairs(hitboxOriginal) do
+  if part and part:IsDescendantOf(c) then
+   restoreOneHitbox(part,old)
+  end
+ end
+end
+local hitboxDiagnosticLabel=nil
+local function isHitboxTeammate(other)
+ if other==LocalPlayer then return true end
+ -- Prioridade para o sistema oficial de Teams do Roblox.
+ local myTeam=LocalPlayer.Team
+ local otherTeam=other.Team
+ if myTeam and otherTeam then return myTeam==otherTeam end
+ -- Alguns jogos utilizam apenas TeamColor, sem um objeto Team associado.
+ if not LocalPlayer.Neutral and not other.Neutral then
+  return LocalPlayer.TeamColor==other.TeamColor
+ end
+ return false
+end
+-- O visual da hitbox nao faz raycasts de parede: evita piscar quando o alvo
+-- passa de um lado para o outro de uma cobertura.
+local function updateHitboxes()
+ if not alive then return end
+ if not settings.hitboxHead and not settings.hitboxBody then
+  if next(hitboxOriginal) then restoreHitboxes() end
+  if hitboxDiagnosticLabel and hitboxDiagnosticLabel.Text~='Hitbox desligada. Nenhuma parte local modificada.' then
+   hitboxDiagnosticLabel.Text='Hitbox desligada. Nenhuma parte local modificada.'
+  end
+  return
+ end
+ local ownRoot=root()
+ local active={}
+ local adjusted=0
+ for _,player in ipairs(Players:GetPlayers()) do
+  if player~=LocalPlayer then
+   local c=player.Character
+   local living,rp=isAliveForHitbox(c)
+   local sameTeam=isHitboxTeammate(player)
+   local inRange=rp and ((not ownRoot) or
+    ((ownRoot.Position-rp.Position).Magnitude<=settings.hitboxMaxDistance))
+   local inFov=true
+   if settings.hitboxUseFov then
+    local cam=workspace.CurrentCamera
+    if not cam or not rp then
+     inFov=false
+    else
+     local pos,onScreen=cam:WorldToViewportPoint(rp.Position)
+     local mid=cam.ViewportSize*.5
+     inFov=onScreen and (Vector2.new(pos.X,pos.Y)-mid).Magnitude<=settings.hitboxFovRadius
+    end
+   end
+   -- A hitbox NUNCA altera colegas de equipe, mesmo se outras opcoes mudarem.
+   local exposed=living and inRange and inFov and not sameTeam
+   if exposed then
+    if settings.hitboxHead then
+     local head=c:FindFirstChild('Head')
+     if head and head:IsA('BasePart') then
+      if setHitboxPart(head,settings.hitboxHeadSize,true) then
+       active[head]=true;adjusted=adjusted+1
+      end
+     end
+    end
+    if settings.hitboxBody then
+     -- O tronco visivel deve ter prioridade; HumanoidRootPart e invisivel.
+     local body=c:FindFirstChild('UpperTorso') or c:FindFirstChild('Torso')
+      or c:FindFirstChild('LowerTorso') or rp
+     if body and body:IsA('BasePart') then
+      if setHitboxPart(body,settings.hitboxBodySize,false) then
+       active[body]=true;adjusted=adjusted+1
+      end
+     end
+    end
+   end
+  end
+ end
+ -- Remover imediatamente efeitos em mortos, alvos fora do alcance e rigs antigos.
+ for part,old in pairs(hitboxOriginal) do
+  if not active[part] then restoreOneHitbox(part,old) end
+ end
+ if hitboxDiagnosticLabel then
+  local status='Partes ampliadas: '..adjusted..' | Visual sem filtro de parede. Acertos dependem do servidor.'
+  if hitboxDiagnosticLabel.Text~=status then hitboxDiagnosticLabel.Text=status end
+ end
+end
+-- Contador flutuante discreto: bonequinho pequeno + quantidade de jogadores
+-- dentro do FOV invisivel no CENTRO da tela. Nunca exibe circulo.
+local updateCombatCounter=function() end
+do
+ local topCounter=make('Frame',{
+  Name='JSMenu_ContadorNoTopo',AnchorPoint=Vector2.new(.5,0),
+  Position=UDim2.new(.5,0,0,8),Size=UDim2.fromOffset(40,62),
+  BackgroundTransparency=1,BorderSizePixel=0,Active=false,ZIndex=79
+ },gui)
+ local function personPiece(x,y,w,h,roundness)
+  local p=make('Frame',{
+   Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),
+   BackgroundColor3=Color3.fromRGB(0,0,0),BorderSizePixel=0,ZIndex=80
+  },topCounter)
+  rounded(p,roundness)
+  make('UIStroke',{Color=Color3.fromRGB(250,250,250),Thickness=.65,Transparency=.3},p)
+ end
+ personPiece(14,1,12,12,6)
+ personPiece(13,15,14,15,5)
+ personPiece(7,17,5,13,3)
+ personPiece(28,17,5,13,3)
+ personPiece(13,30,6,9,3)
+ personPiece(21,30,6,9,3)
+ local counterValue=text(topCounter,'0',19,UDim2.fromOffset(0,39),UDim2.fromOffset(40,22))
+ counterValue.Font=Enum.Font.SciFi
+ counterValue.TextColor3=Color3.fromRGB(0,0,0)
+ counterValue.TextStrokeColor3=Color3.fromRGB(255,255,255)
+ counterValue.TextStrokeTransparency=.04
+ counterValue.ZIndex=80
+ toggle(pages.Hitbox,'Contador pequeno no topo',true,function(v)
+  settings.combatCounter=v
+  topCounter.Visible=v
+ end)
+ slider(pages.Hitbox,'Raio invisivel da mira (px)',60,350,185,function(v)
+  settings.combatRadius=v
+ end)
+ local lastTarget=nil
+ -- A deteccao so considera personagens vivos, em pe e projetados na tela.
+ local function isStanding(char,hum)
+  if hum.Health<=0 then return false end
+  local st=hum:GetState()
+  if st==Enum.HumanoidStateType.Dead
+   or st==Enum.HumanoidStateType.Physics
+   or st==Enum.HumanoidStateType.Ragdoll
+   or st==Enum.HumanoidStateType.FallingDown
+   or hum.Sit then return false end
+  if char:GetAttribute('Downed')==true or char:GetAttribute('Knocked')==true
+   or char:GetAttribute('IsDowned')==true then return false end
+  return true
+ end
+ local function scanTargets()
+  local cam=workspace.CurrentCamera
+  if not cam then return nil,0 end
+  local vp=cam.ViewportSize
+  local center=Vector2.new(vp.X*.5,vp.Y*.5)
+  local limit=math.min(settings.combatRadius,math.min(vp.X,vp.Y)*.38)
+  local nearest,nearestDist=nil,limit
+  local total=0
+  for _,plr in ipairs(Players:GetPlayers()) do
+   if plr~=LocalPlayer and (not settings.espOnlyEnemies or not isAllyESP(plr)) then
+    local char=plr.Character
+    local hum=char and char:FindFirstChildOfClass('Humanoid')
+    local head=char and char:FindFirstChild('Head')
+    if hum and head and head:IsA('BasePart') and isStanding(char,hum) then
+     local pos,onScreen=cam:WorldToViewportPoint(head.Position)
+     if onScreen and pos.Z>0 then
+      local dist=(Vector2.new(pos.X,pos.Y)-center).Magnitude
+      if dist<=limit then
+       total=total+1
+       if dist<nearestDist then nearest=head;nearestDist=dist end
+      end
+     end
+    end
+   end
+  end
+  return nearest,total
+ end
+ updateCombatCounter=function()
+  if not alive or not settings.combatCounter then return end
+  local _,total=scanTargets()
+  counterValue.Text=tostring(total)
+ end
+ updateCombatCounter()
+end
+section(pages.Hitbox,'COMBATE | HITBOX CABECA E CORPO')
+note(pages.Hitbox,'Hitbox local e restaurada em morte, troca de personagem e estados de queda reconhecidos pelo Humanoid. O servidor decide os acertos.')
+hitboxDiagnosticLabel=note(pages.Hitbox,'Hitbox desligada. Nenhuma parte local modificada.')
+do -- Escopo dos controles da hitbox
+local setHeadHitbox=toggle(pages.Hitbox,'Hitbox Cabeca',false,function(v)
+ settings.hitboxHead=v
+ updateHitboxes()
+end)
+slider(pages.Hitbox,'Tamanho Cabeca',2,20,6,function(v)
+ settings.hitboxHeadSize=v
+ updateHitboxes()
+end)
+local setBodyHitbox=toggle(pages.Hitbox,'Hitbox Corpo',false,function(v)
+ settings.hitboxBody=v
+ updateHitboxes()
+end)
+slider(pages.Hitbox,'Tamanho Corpo',2,20,8,function(v)
+ settings.hitboxBodySize=v
+ updateHitboxes()
+end)
+slider(pages.Hitbox,'Distancia maxima (studs)',30,2000,900,function(v)
+ settings.hitboxMaxDistance=v
+ updateHitboxes()
+end)
+note(pages.Hitbox,'Protecao de equipe permanente: colegas nunca recebem hitbox. Equipes sao detectadas por Team ou TeamColor do Roblox.')
+toggle(pages.Hitbox,'Mostrar caixas semitransparentes',true,function(v)
+ settings.hitboxShow=v
+ updateHitboxes()
+end)
+section(pages.Hitbox,'VISUAL EXTRA')
+slider(pages.Hitbox,'Transparencia Hitbox (%)',0,100,0,function(v)
+ settings.hitboxTransparency=v
+ updateHitboxOpacity()
+end)
+local hitboxColors={{'Preto',Color3.fromRGB(0,0,0)},{'Ciano',Color3.fromRGB(0,210,255)},{'Vermelho',Color3.fromRGB(255,55,55)},{'Verde',Color3.fromRGB(0,230,118)},{'Branco',Color3.fromRGB(255,255,255)},{'Roxo',Color3.fromRGB(185,90,255)}}
+local hitboxColorPref,hitboxStored=settings.pref.start(pages.Hitbox,'Indice da cor Hitbox',1)
+local hitboxColorIndex=math.clamp(math.floor(tonumber(hitboxStored) or 1),1,#hitboxColors)
+settings.hitboxColor=hitboxColors[hitboxColorIndex][2]
+local hitboxColorButton=button(pages.Hitbox,'Cor Hitbox: '..hitboxColors[hitboxColorIndex][1]..' (trocar)',function(b)
+ hitboxColorIndex=hitboxColorIndex%#hitboxColors+1
+ local item=hitboxColors[hitboxColorIndex]
+ settings.hitboxRGB=false
+ settings.hitboxColor=item[2]
+ b.Text='Cor Hitbox: '..item[1]..' (trocar)'
+ settings.pref.set(hitboxColorPref,hitboxColorIndex)
+ updateHitboxes()
+end)
+settings.pref.register(hitboxColorPref,function()
+ hitboxColorButton.Text='Cor Hitbox: '..hitboxColors[hitboxColorIndex][1]..' (trocar)'
+ settings.hitboxColor=hitboxColors[hitboxColorIndex][2]
+ updateHitboxes()
+end)
+-- Configuracao de FOV independente da camera e do esp.
+section(pages.Hitbox,'FOV | CORES E RGB')
+toggle(pages.Hitbox,'Mostrar circulo FOV',false,function(v)
+ settings.hitboxFovVisible=v;settings.updateFovRing()
+end)
+slider(pages.Hitbox,'Raio do FOV (pixels)',40,400,145,function(v)
+ settings.hitboxFovRadius=v;settings.updateFovRing();updateHitboxes()
+end)
+slider(pages.Hitbox,'Espessura do circulo FOV',1,12,2,function(v)
+ settings.hitboxFovThickness=v;settings.updateFovRing()
+end)
+toggle(pages.Hitbox,'Limitar Hitbox ao FOV',false,function(v)
+ settings.hitboxUseFov=v;updateHitboxes()
+end)
+local fovPalette={
+ {'Branco',Color3.fromRGB(255,255,255)},
+ {'Vermelho',Color3.fromRGB(255,72,72)},
+ {'Verde',Color3.fromRGB(50,245,130)},
+ {'Azul',Color3.fromRGB(65,135,255)},
+ {'Roxo',Color3.fromRGB(185,85,245)},
+ {'Amarelo',Color3.fromRGB(255,210,60)},
+ {'Ciano',Color3.fromRGB(70,225,250)}
+}
+local fovColorPref,fovStored=settings.pref.start(pages.Hitbox,'Indice da cor FOV',1)
+local fovPaletteIndex=math.clamp(math.floor(tonumber(fovStored) or 1),1,#fovPalette)
+settings.hitboxFovColor=fovPalette[fovPaletteIndex][2]
+local fovColorButton=button(pages.Hitbox,'Cor do FOV: '..fovPalette[fovPaletteIndex][1]..' (trocar)',function(b)
+ fovPaletteIndex=fovPaletteIndex%#fovPalette+1
+ local opt=fovPalette[fovPaletteIndex]
+ settings.hitboxFovColor=opt[2]
+ b.Text='Cor do FOV: '..opt[1]..' (trocar)'
+ settings.pref.set(fovColorPref,fovPaletteIndex)
+ settings.updateFovRing()
+end)
+settings.pref.register(fovColorPref,function()
+ settings.hitboxFovColor=fovPalette[fovPaletteIndex][2]
+ fovColorButton.Text='Cor do FOV: '..fovPalette[fovPaletteIndex][1]..' (trocar)'
+ settings.updateFovRing()
+end)
+toggle(pages.Hitbox,'FOV RGB (arco-iris)',false,function(v)
+ settings.hitboxFovRGB=v;settings.updateFovRing()
+end)
+toggle(pages.Hitbox,'Hitbox RGB (corpo e cabeca)',false,function(v)
+ settings.hitboxRGB=v;updateHitboxes()
+end)
+note(pages.Hitbox,'O circulo e as cores sao efeitos locais. FOV pode filtrar visualmente as hitboxes, mas o servidor decide as colisoes e os acertos.')
+local rgbColorTick=0
+listen(Run.Heartbeat,function(dt)
+ if not alive or not (settings.hitboxFovRGB or settings.hitboxRGB) then return end
+ rgbColorTick=rgbColorTick+dt
+ if rgbColorTick<.06 then return end
+ rgbColorTick=0
+ local rgb=Color3.fromHSV((os.clock()*.16)%1,1,1)
+ if settings.hitboxFovRGB then settings.hitboxFovStroke.Color=rgb end
+ if settings.hitboxRGB then
+  settings.hitboxColor=rgb
+  -- Atualizar o material visual sem aguardar a varredura da hitbox.
+  for _,visual in pairs(hitboxVisual) do
+   if visual and visual.Parent then
+    if visual:IsA('Highlight') then visual.FillColor=rgb
+    else visual.Color3=rgb end
+   end
+  end
+ end
+end)
+button(pages.Hitbox,'Restaurar hitboxes agora',function()
+ settings.hitboxHead=false
+ settings.hitboxBody=false
+ setHeadHitbox(false)
+ setBodyHitbox(false)
+ restoreHitboxes()
+ notify('Hitboxes restauradas')
+end)
+-- Removidos os recursos de tiro experimentais que nao funcionavam.
+end -- Fim dos controles da hitbox
+-- Reavalia imediatamente a pose quando o Humanoid muda de estado;
+-- no Heartbeat tambem detecta ragdolls customizados sem eventos do Humanoid.
+do
+ local function acompanharPersonagemHitbox(char)
+  task.spawn(function()
+   local hum=char:FindFirstChildOfClass('Humanoid') or char:WaitForChild('Humanoid',8)
+   if not alive or not hum then return end
+   local function reverHitbox()
+    if not alive then return end
+    local living=isAliveForHitbox(char)
+    if not living then restoreCharacterHitbox(char) end
+    updateHitboxes()
+   end
+   listen(hum.HealthChanged,reverHitbox)
+   listen(hum.StateChanged,reverHitbox)
+   listen(hum.Died,function() restoreCharacterHitbox(char) end)
+   reverHitbox()
+  end)
+ end
+ local function acompanharJogadorHitbox(plr)
+  if plr==LocalPlayer then return end
+  if plr.Character then acompanharPersonagemHitbox(plr.Character) end
+  listen(plr.CharacterRemoving,function(char) restoreCharacterHitbox(char) end)
+  listen(plr.CharacterAdded,acompanharPersonagemHitbox)
+ end
+ for _,plr in ipairs(Players:GetPlayers()) do acompanharJogadorHitbox(plr) end
+ listen(Players.PlayerAdded,acompanharJogadorHitbox)
+ listen(Players.PlayerRemoving,function(plr) restoreCharacterHitbox(plr.Character) end)
+end
+local hitboxTick=0
+local hitboxLastErrorAt=-100
+listen(Run.Heartbeat,function(dt)
+ if not alive then return end
+ hitboxTick=hitboxTick+dt
+ if hitboxTick>=.12 then
+  hitboxTick=0
+  local ok,err=pcall(updateHitboxes)
+  if not ok and os.clock()-hitboxLastErrorAt>5 then
+   hitboxLastErrorAt=os.clock()
+   warn('[KIRA MENU / HITBOX] Erro local: '..tostring(err))
+  end
+ end
+end)
+
+section(pages.Config,'CAMERA')
+slider(pages.Config,'FOV da camera',40,120,70,onCamFov)
+-- Mira central removida a pedido do criador.
+note(pages.Config,'God Mode em jogos PvP de terceiros depende do servidor; um script local nao pode garantir imunidade a dano.')
+do -- CONFIGURACOES | TELA PARADA (pose travada do Free Fire); escopo para compilacao
+-- Efeito de animacao LOCAL: o boneco continua podendo andar, mas a pose
+-- fica congelada na sua tela. Nao afeta dano, hitbox, tiros ou servidor.
+local telaParadaAtiva=false
+local telaParadaAnterior=setmetatable({},{__mode='k'})
+local telaParadaTempo=0
+local function restaurarTelaParada()
+ telaParadaAtiva=false
+ for track,velocidade in pairs(telaParadaAnterior) do
+  pcall(function() track:AdjustSpeed(velocidade) end)
+  telaParadaAnterior[track]=nil
+ end
+end
+local function atualizarTelaParada()
+ if not alive or not telaParadaAtiva then return end
+ local char=LocalPlayer.Character
+ local hum=char and char:FindFirstChildOfClass('Humanoid')
+ local animator=hum and hum:FindFirstChildOfClass('Animator')
+ if not animator then return end
+ local ok,tracks=pcall(function() return animator:GetPlayingAnimationTracks() end)
+ if not ok or not tracks then return end
+ for _,track in ipairs(tracks) do
+  if telaParadaAnterior[track]==nil then
+   local got,speed=pcall(function() return track.Speed end)
+   telaParadaAnterior[track]=got and speed or 1
+  end
+  pcall(function() track:AdjustSpeed(0) end)
+ end
+end
+settings.restoreTelaParada=restaurarTelaParada
+section(pages.Config,'TELA PARADA')
+toggle(pages.Config,'Tela parada',false,function(ativado)
+ if ativado then
+  telaParadaAtiva=true
+  atualizarTelaParada()
+  notify('Tela parada ativada: pose congelada localmente')
+ else
+  restaurarTelaParada()
+  notify('Tela parada desativada')
+ end
+end)
+note(pages.Config,'Trava visualmente a pose do seu personagem enquanto voce anda. Nao congela a partida nem os outros jogadores.')
+listen(Run.Heartbeat,function(dt)
+ if not telaParadaAtiva or not alive then return end
+ telaParadaTempo=telaParadaTempo+dt
+ if telaParadaTempo>=.1 then
+  telaParadaTempo=0
+  atualizarTelaParada()
+ end
+end)
+
+end -- TELA PARADA
+-- Freecam removida para reduzir conexoes de renderizacao.
+-- Editor de mira removido a pedido do criador JS.
+
+-- Escopo de inicializacao de interface KIRA.
+-- Impede exceder o limite de variaveis locais no chunk principal.
+(function()
+-- ESP MY: mesmos controles e mesmo renderizador do ESP Jogador, SEM Linha.
+section(pages.ESPMy,'VISUALIZACAO DO MEU PERSONAGEM')
+local myGrid=make('Frame',{
+ Name='ESP_MY_Opcoes',Size=UDim2.new(1,0,0,198),
+ BackgroundTransparency=1,BorderSizePixel=0,LayoutOrder=nextOrder(pages.ESPMy)
+},pages.ESPMy)
+make('UIGridLayout',{
+ SortOrder=Enum.SortOrder.LayoutOrder,
+ CellSize=UDim2.new(.5,-7,0,43),CellPadding=UDim2.fromOffset(12,8),
+ FillDirection=Enum.FillDirection.Horizontal,FillDirectionMaxCells=2
+},myGrid)
+local function mySwitch(label,key)
+ toggle(myGrid,label,false,function(v) ownESP[key]=v end)
+end
+mySwitch('ESP Highlight','highlight')
+mySwitch('ESP Box','box')
+mySwitch('ESP Esqueleto R6 / R15','skeleton')
+mySwitch('ESP Nome','name')
+mySwitch('ESP Vida verde','life')
+mySwitch('ESP Metros','distance')
+mySwitch('ESP RGB','rgb')
+slider(pages.ESPMy,'Velocidade RGB ESP MY (%)',1,100,25,function(v) ownESP.rgbSpeed=v end)
+moveLastEspControl('ESPMy')
+slider(pages.ESPMy,'Brilho ESP MY (%)',10,100,100,function(v) ownESP.brightness=v end)
+moveLastEspControl('ESPMy')
+section(pages.ESPMy,'AJUSTES DO ESP MY')
+slider(pages.ESPMy,'Espessura do ESP MY',1,6,2,function(v) ownESP.thickness=v end)
+moveLastEspControl('ESPMy')
+slider(pages.ESPMy,'Tamanho do texto ESP MY',8,20,12,function(v) ownESP.textSize=v end)
+moveLastEspControl('ESPMy')
+slider(pages.ESPMy,'Distancia maxima ESP MY',50,5000,5000,function(v) ownESP.maxDistance=v end)
+moveLastEspControl('ESPMy')
+
+-- ===== TELEPORTE =====
+do -- Escopo dos controles de teleporte
+section(pages.Teleporte,'POSICOES')
+button(pages.Teleporte,'Salvar posicao atual',function(b)
+ local r=root()
+ if r then lastPos=r.CFrame;b.Text='POSICAO SALVA!' else notify('Personagem indisponivel') end
+end)
+button(pages.Teleporte,'Voltar a posicao salva',function()
+ local r=root()
+ if r and lastPos then teleportarSeguro(lastPos,'Posicao restaurada') else notify('Salve uma posicao primeiro') end
+end)
+section(pages.Teleporte,'TELEPORTES FAVORITOS')
+local favorites={}
+local favoriteCount=0
+button(pages.Teleporte,'Adicionar local favorito',function()
+ local r=root()
+ if not r then notify('Personagem indisponivel');return end
+ if favoriteCount>=10 then notify('Limite de 10 favoritos');return end
+ favoriteCount=favoriteCount+1
+ local index=favoriteCount
+ favorites[index]=r.CFrame
+ button(pages.Teleporte,'Ir para local '..index,function()
+  local rr=root()
+  if rr and favorites[index] then teleportarSeguro(favorites[index],'Local '..index..' selecionado') end
+ end)
+ notify('Local '..index..' salvo!')
+end)
+section(pages.Teleporte,'ESCOLHA O JOGADOR')
+local selectedTarget=nil
+local playerSelect=button(pages.Teleporte,'SELECIONAR JOGADOR  ▼',function() end)
+local playerList=make('ScrollingFrame',{
+ Size=UDim2.new(1,0,0,165),BackgroundColor3=COLOR.button,
+ BackgroundTransparency=.12,BorderSizePixel=0,ScrollBarThickness=3,
+ CanvasSize=UDim2.fromOffset(0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y,
+ LayoutOrder=nextOrder(pages.Teleporte),Visible=false
+},pages.Teleporte)
+rounded(playerList,8)
+make('UIListLayout',{SortOrder=Enum.SortOrder.Name,Padding=UDim.new(0,4)},playerList)
+local function refreshPlayerList()
+ for _,v in ipairs(playerList:GetChildren()) do
+  if v:IsA('TextButton') then v:Destroy() end
+ end
+ for _,p in ipairs(Players:GetPlayers()) do
+  if p~=LocalPlayer then
+   local item=make('TextButton',{
+    Name=p.Name,Text=p.DisplayName..'  (@'..p.Name..')',
+    Size=UDim2.new(1,-5,0,34),TextSize=12,Font=Enum.Font.Gotham,
+    TextColor3=COLOR.white,BackgroundColor3=COLOR.side,BorderSizePixel=0
+   },playerList)
+   rounded(item,6)
+   listen(item.MouseButton1Click,function()
+    selectedTarget=p
+    playerSelect.Text='ALVO: '..p.DisplayName..'  ▼'
+    playerList.Visible=false
+   end)
+  end
+ end
+end
+listen(playerSelect.MouseButton1Click,function()
+ playerList.Visible=not playerList.Visible
+ if playerList.Visible then refreshPlayerList() end
+end)
+listen(Players.PlayerAdded,function() if playerList.Visible then refreshPlayerList() end end)
+listen(Players.PlayerRemoving,function(p)
+ if selectedTarget==p then selectedTarget=nil;playerSelect.Text='SELECIONAR JOGADOR  ▼' end
+ if playerList.Visible then task.defer(refreshPlayerList) end
+end)
+local function selectedPlayer()
+ return selectedTarget and selectedTarget.Parent==Players and selectedTarget or nil
+end
+button(pages.Teleporte,'Teleportar ate jogador',function()
+ local p=selectedPlayer()
+ local r=root()
+ local dest=p and p.Character and p.Character:FindFirstChild('HumanoidRootPart')
+ if r and dest then teleportarSeguro(dest.CFrame*CFrame.new(0,0,6),'Destino: '..p.Name,p.Character) else notify('Jogador nao encontrado') end
+end)
+button(pages.Teleporte,'Copiar minha posicao (texto)',function()
+ local r=root();if not r then return end
+ local s=string.format('%.1f, %.1f, %.1f',r.Position.X,r.Position.Y,r.Position.Z)
+ if setclipboard then pcall(setclipboard,s);notify('Posicao copiada') else notify(s) end
+end)
+note(pages.Teleporte,'TP seguro verifica o chao e evita lugares ocupados. Alguns jogos bloqueiam teleporte pelo servidor e ainda podem eliminar o personagem.')
+end -- fim dos controles de teleporte
+
+-- ===== PERFIL / TEMPO RESTANTE =====
+-- Mostra o prazo real do teste local salvo para este UserId.
+-- O prazo so comeca depois da primeira key aceita.
+-- Perfil fixo na parte INFERIOR ESQUERDA, dentro do espaco livre sob as abas.
+-- Ele nao faz parte do ScrollingFrame das configuracoes e nao ocupa espaco nas opcoes.
+local profileCard=make('Frame',{
+ Name='PerfilDeAcesso',Position=UDim2.new(0,24,1,-113),
+ Size=UDim2.new(0,sideWidth-16,0,99),
+ BackgroundColor3=Color3.fromRGB(13,15,21),BackgroundTransparency=0,
+ BorderSizePixel=0,ZIndex=4
+},menu)
+rounded(profileCard,11)
+make('UIStroke',{Color=Color3.fromRGB(133,152,180),Thickness=1,Transparency=.43},profileCard)
+local avatar=make('ImageLabel',{
+ Name='FotoPerfil',BackgroundColor3=COLOR.side,BackgroundTransparency=.1,
+ Position=UDim2.fromOffset(8,8),Size=UDim2.fromOffset(30,30),
+ BorderSizePixel=0,Image='',ZIndex=5
+},profileCard)
+rounded(avatar,15)
+task.spawn(function()
+ local ok,uri=pcall(function()
+  return Players:GetUserThumbnailAsync(LocalPlayer.UserId,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size150x150)
+ end)
+ if ok and alive and avatar.Parent then avatar.Image=uri end
+end)
+local displayName=text(profileCard,LocalPlayer.DisplayName,10,
+ UDim2.fromOffset(45,7),UDim2.new(1,-52,0,18))
+displayName.ZIndex=5
+displayName.TextTruncate=Enum.TextTruncate.AtEnd
+displayName.TextXAlignment=Enum.TextXAlignment.Left
+local handle=text(profileCard,'@'..LocalPlayer.Name,9,
+ UDim2.fromOffset(45,23),UDim2.new(1,-52,0,14))
+handle.ZIndex=5
+handle.TextTruncate=Enum.TextTruncate.AtEnd
+handle.TextColor3=COLOR.gray
+handle.TextXAlignment=Enum.TextXAlignment.Left
+local profileDivider=make('Frame',{
+ Name='SeparadorPerfil',BackgroundColor3=Color3.fromRGB(62,62,69),
+ BackgroundTransparency=.35,BorderSizePixel=0,
+ Position=UDim2.fromOffset(8,44),Size=UDim2.new(1,-16,0,1),ZIndex=5
+},profileCard)
+local userIdText=text(profileCard,'ID: '..tostring(LocalPlayer.UserId),11,
+ UDim2.fromOffset(9,47),UDim2.new(1,-18,0,23))
+userIdText.ZIndex=5
+userIdText.Font=Enum.Font.GothamBold
+userIdText.TextColor3=Color3.fromRGB(255,255,255)
+userIdText.TextXAlignment=Enum.TextXAlignment.Left
+userIdText.TextScaled=true
+local accessPill=make('Frame',{
+ BackgroundColor3=Color3.fromRGB(21,21,26),BackgroundTransparency=.04,
+ BorderSizePixel=0,Position=UDim2.fromOffset(7,74),
+ Size=UDim2.new(1,-14,0,19),ZIndex=5
+},profileCard)
+rounded(accessPill,6)
+local accessLabel=text(accessPill,'KIRA MENU  •  PERFIL',8,
+ UDim2.fromOffset(3,0),UDim2.new(1,-6,1,0))
+accessLabel.ZIndex=6
+accessLabel.TextColor3=COLOR.gray
+accessLabel.TextXAlignment=Enum.TextXAlignment.Center
+-- Sem loop permanente: esse rodape e estatico e nao precisa de atualizacoes.
+
+-- ===== JS X1TER | UTILIDADES ADICIONAIS =====
+do
+ local page=pages.Config
+ section(page,'UTILIDADES 2.0')
+ -- HUD de latencia e cliques por segundo.
+ local hud=text(gui,'',12,UDim2.new(0,15,0,85),UDim2.fromOffset(190,28))
+ hud.TextXAlignment=Enum.TextXAlignment.Left;hud.Visible=false
+ local clickTimes={}
+ table.insert(conn,UIS.InputBegan:Connect(function(input,processed)
+  if processed then return end
+  if input.UserInputType==Enum.UserInputType.MouseButton1 then
+   clickTimes[#clickTimes+1]=os.clock()
+  end
+ end))
+ toggle(pages.Config,'HUD Ping e CPS',false,function(v) hud.Visible=v end)
+ task.spawn(function()
+  while alive and gui.Parent do
+   if hud.Visible then
+    local now=os.clock()
+    for i=#clickTimes,1,-1 do if now-clickTimes[i]>1 then table.remove(clickTimes,i) end end
+    local ping='--';pcall(function() ping=tostring(math.floor(LocalPlayer:GetNetworkPing()*1000)) end)
+    hud.Text='PING '..ping..' ms   |   CPS '..#clickTimes
+   end
+   task.wait(.2)
+  end
+ end)
+ local aimDot=make('Frame',{Name='KIRA_MiraRemovida',Size=UDim2.fromOffset(5,5),Visible=false,BackgroundTransparency=1},gui)
+ -- Perfis simples: gravam apenas preferencias de utilidade e nao prometem restaurar hacks automaticamente.
+ section(page,'PERFIS E SERVIDOR')
+ local profileFile='KIRA_UTILIDADES_'..tostring(LocalPlayer.UserId)..'.json'
+ button(page,'Salvar perfil visual',function()
+  if type(writefile)~='function' then notify('Salvar arquivo indisponivel');return end
+  local data={fov=workspace.CurrentCamera and workspace.CurrentCamera.FieldOfView or 70, crosshair=aimDot.Visible, size=aimDot.Size.X.Offset, color=aimDot:GetAttribute('ColorIndex') or 1, pingHud=hud.Visible}
+  local ok=pcall(function() writefile(profileFile,HttpService:JSONEncode(data)) end)
+  notify(ok and 'Perfil visual salvo' or 'Erro ao salvar perfil')
+ end)
+ button(page,'Carregar perfil visual',function()
+  if type(readfile)~='function' then notify('Leitura indisponivel');return end
+  local ok,data=pcall(function() return HttpService:JSONDecode(readfile(profileFile)) end)
+  if not ok or type(data)~='table' then notify('Perfil nao encontrado');return end
+  if type(data.fov)=='number' and workspace.CurrentCamera then workspace.CurrentCamera.FieldOfView=math.clamp(data.fov,40,120) end
+  aimDot.Visible=data.crosshair==true
+  local sz=math.clamp(tonumber(data.size) or 5,2,18);aimDot.Size=UDim2.fromOffset(sz,sz)
+  local colors={Color3.fromRGB(255,255,255),Color3.fromRGB(40,255,110),Color3.fromRGB(255,65,65)}
+  local ix=math.clamp(math.floor(tonumber(data.color) or 1),1,3)
+  aimDot.BackgroundColor3=colors[ix];aimDot:SetAttribute('ColorIndex',ix)
+  hud.Visible=data.pingHud==true
+  notify('Perfil visual carregado')
+ end)
+ button(page,'Trocar de servidor (Server Hop)',function()
+  notify('Procurando outro servidor...')
+  task.spawn(function()
+   local ok,err=pcall(function()
+    local ts=game:GetService('TeleportService')
+    ts:Teleport(game.PlaceId,LocalPlayer)
+   end)
+   if not ok and alive then notify('Server Hop indisponivel: '..tostring(err):sub(1,45)) end
+  end)
+ end)
+ table.insert(conn,gui.Destroying:Connect(function() stopSpectate() end))
+end
+
+
+-- ===== JS MENU V3 | EXTRAS FUNCIONAIS LOCAIS =====
+do
+ local extraHistory={}
+ local function remember(msg)
+  table.insert(extraHistory,1,os.date('%H:%M:%S')..' - '..msg)
+  if #extraHistory>20 then table.remove(extraHistory) end
+  notify(msg)
+ end
+ section(pages.Principais,'MOVIMENTO EXTRA')
+ -- Dash removido.
+ local doubleJump=false
+ local jumps=0
+ toggle(pages.Principais,'Pulo duplo',false,function(v) doubleJump=v;jumps=0 end)
+ listen(UIS.JumpRequest,function()
+  if not alive or not doubleJump then return end
+  local h=humanoid()
+  if not h then return end
+  if h.FloorMaterial~=Enum.Material.Air then jumps=0;return end
+  if jumps<1 then
+   jumps=jumps+1
+   h:ChangeState(Enum.HumanoidStateType.Jumping)
+   local r=root()
+   if r then r.AssemblyLinearVelocity=Vector3.new(r.AssemblyLinearVelocity.X,math.max(h.JumpPower,45),r.AssemblyLinearVelocity.Z) end
+  end
+ end)
+ listen(Run.Heartbeat,function()
+  if doubleJump then
+   local h=humanoid()
+   if h and h.FloorMaterial~=Enum.Material.Air then jumps=0 end
+  end
+ end)
+ local sizeOriginal={}
+ local sizeFactor=100
+ local function avatarSize(percent)
+  local h=humanoid()
+  if not h then return remember('Personagem indisponivel') end
+  if h.RigType~=Enum.HumanoidRigType.R15 then return remember('Escala de avatar requer R15') end
+  for _,name in ipairs({'BodyHeightScale','BodyWidthScale','BodyDepthScale','HeadScale'}) do
+   local v=h:FindFirstChild(name)
+   if v and v:IsA('NumberValue') then
+    if sizeOriginal[v]==nil then sizeOriginal[v]=v.Value end
+    v.Value=sizeOriginal[v]*percent/100
+   end
+  end
+ end
+ slider(pages.Principais,'Tamanho R15 (%)',50,150,100,function(v) sizeFactor=v;avatarSize(v) end)
+ button(pages.Principais,'Restaurar tamanho R15',function()
+  for v,original in pairs(sizeOriginal) do if v.Parent then pcall(function() v.Value=original end) end end
+  table.clear(sizeOriginal);sizeFactor=100;remember('Tamanho restaurado')
+ end)
+ section(pages.Teleporte,'HISTORICO')
+ local previousPositions={}
+ button(pages.Teleporte,'Registrar posicao no historico',function()
+  local r=root()
+  if not r then return end
+  table.insert(previousPositions,1,r.CFrame)
+  if #previousPositions>10 then table.remove(previousPositions) end
+  remember('Posicao registrada ('..#previousPositions..'/10)')
+ end)
+ button(pages.Teleporte,'Voltar a ultima posicao do historico',function()
+  local r=root()
+  local cf=table.remove(previousPositions,1)
+  if r and cf then teleportarSeguro(cf,'Historico restaurado') else remember('Historico vazio') end
+ end)
+ button(pages.Teleporte,'Limpar historico de posicoes',function() table.clear(previousPositions);remember('Historico limpo') end)
+ section(pages.Config,'INFORMACOES DA SESSAO')
+ button(pages.Config,'Mostrar dados do servidor',function()
+  remember('Jogadores: '..#Players:GetPlayers()..'/'..Players.MaxPlayers..' | PlaceId: '..game.PlaceId)
+ end)
+ button(pages.Config,'Mostrar ID do usuario',function() remember('Seu UserId: '..LocalPlayer.UserId) end)
+ section(pages.Config,'INVENTARIO LOCAL | DADOS REAIS')
+ local inventorySummary=note(pages.Config,'Seu inventario ainda nao foi consultado.')
+ inventorySummary.Size=UDim2.new(1,0,0,105)
+ inventorySummary.TextWrapped=true
+ inventorySummary.TextYAlignment=Enum.TextYAlignment.Top
+ button(pages.Config,'Ler meu inventario (Backpack + equipado)',function()
+  local counts={}
+  local total=0
+  local equipped=0
+  local function scan(container,isEquipped)
+   if not container then return end
+   for _,item in ipairs(container:GetChildren()) do
+    if item:IsA('Tool') then
+     total=total+1
+     if isEquipped then equipped=equipped+1 end
+     local name=tostring(item.Name):sub(1,48)
+     counts[name]=(counts[name] or 0)+1
+    end
+   end
+  end
+  scan(LocalPlayer:FindFirstChildOfClass('Backpack'),false)
+  scan(LocalPlayer.Character,true)
+  local names={}
+  for name in pairs(counts) do table.insert(names,name) end
+  table.sort(names)
+  local lines={('Ferramentas: %d  |  Equipadas: %d'):format(total,equipped)}
+  for i=1,math.min(8,#names) do
+   local name=names[i]
+   table.insert(lines,name..(counts[name]>1 and ('  x'..counts[name]) or ''))
+  end
+  if #names>8 then table.insert(lines,'... e mais '..(#names-8)..' tipos') end
+  inventorySummary.Text=table.concat(lines,'\n')
+  remember('Inventario local atualizado: '..total..' ferramentas')
+ end)
+ section(pages.Config,'PERFIS')
+ local profileName='padrao'
+ local profileInput=field(pages.Config,'Nome do perfil (ex: pvp)')
+ profileInput.Text='padrao'
+ button(pages.Config,'Selecionar nome do perfil',function()
+  profileName=profileInput.Text:gsub('[^%w_%-]',''):sub(1,24)
+  if profileName=='' then profileName='padrao' end
+  remember('Perfil selecionado: '..profileName)
+ end)
+ local function profilePath()
+  return 'KIRA_'..tostring(game.PlaceId)..'_'..tostring(LocalPlayer.UserId)..'_'..profileName..'.json'
+ end
+ button(pages.Config,'Salvar perfil de aparencia',function()
+  if type(writefile)~='function' then return remember('Executor nao permite salvar arquivos') end
+  local data={cameraFov=workspace.CurrentCamera and workspace.CurrentCamera.FieldOfView or 70,
+   motion=uiMotion,gravity=workspace.Gravity,clock=Lighting.ClockTime,
+   panelScale=(menu:FindFirstChildOfClass('UIScale') and menu:FindFirstChildOfClass('UIScale').Scale or 1)}
+  local ok=pcall(function() writefile(profilePath(),HttpService:JSONEncode(data)) end)
+  remember(ok and 'Perfil salvo: '..profileName or 'Falha ao salvar')
+ end)
+ button(pages.Config,'Carregar perfil de aparencia',function()
+  if type(readfile)~='function' then return remember('Executor nao permite ler arquivos') end
+  local ok,data=pcall(function() return HttpService:JSONDecode(readfile(profilePath())) end)
+  if not ok or type(data)~='table' then return remember('Perfil nao encontrado') end
+  if type(data.cameraFov)=='number' and workspace.CurrentCamera then
+   workspace.CurrentCamera.FieldOfView=math.clamp(data.cameraFov,40,120)
+  end
+  if type(data.gravity)=='number' then workspace.Gravity=math.clamp(data.gravity,0,196.2) end
+  if type(data.clock)=='number' then Lighting.ClockTime=math.clamp(data.clock,0,24) end
+  if type(data.motion)=='boolean' then uiMotion=data.motion end
+  local scale=menu:FindFirstChildOfClass('UIScale')
+  if scale and type(data.panelScale)=='number' then scale.Scale=math.clamp(data.panelScale,.65,1.15) end
+  remember('Perfil carregado: '..profileName)
+ end)
+ section(pages.Config,'PERSONALIZACAO')
+ local alpha=0
+ slider(pages.Config,'Transparencia do painel (%)',0,45,0,function(v)
+  alpha=v
+  menu.BackgroundTransparency=v/100
+ end)
+ button(pages.Config,'Restaurar transparencia',function() alpha=0;menu.BackgroundTransparency=0;remember('Transparencia restaurada') end)
+ button(pages.Config,'Mostrar historico de acoes',function()
+  if #extraHistory==0 then return remember('Nenhuma acao registrada') end
+  remember(extraHistory[1])
+ end)
+ button(pages.Config,'Limpar historico de acoes',function() table.clear(extraHistory);remember('Historico limpo') end)
+ table.insert(conn,gui.Destroying:Connect(function()
+  for v,original in pairs(sizeOriginal) do if v.Parent then pcall(function() v.Value=original end) end end
+ end))
+ note(pages.Config,'Funcoes locais podem depender do jogo e servidor. Salvar perfis exige suporte a arquivos do executor.')
+end
+
+-- ===== BLACK EDITION 2.0: CONTROLES DE APARENCIA =====
+section(pages.Config,'JANELA DE AJUSTES')
+toggle(pages.Config,'Mostrar painel de ajustes',true,function(ativado)
+ settings.ajustesExternosAtivos=ativado
+ settings.sincronizarAjustesExternos()
+end)
+note(pages.Config,'Liga ou esconde o mini painel externo; seus recursos continuam como estavam.')
+section(pages.Config,'KIRA MENU | APARENCIA PREMIUM')
+note(pages.Config,'Tema preto e azul eletrico para PC. Use o atalho configurado (padrao: E) para ocultar ou reabrir o painel.')
+toggle(pages.Config,'Animacoes suaves',true,function(v)
+ uiMotion=v
+ notify(v and 'Animacoes ativadas' or 'Animacoes desativadas')
+end)
+local savedInitialScale=100
+if type(readfile)=='function' then
+ local ok,data=pcall(function() return HttpService:JSONDecode(readfile('JS_MENU_LAYOUT_'..tostring(LocalPlayer.UserId)..'.json')) end)
+ if ok and type(data)=='table' and type(data.scale)=='number' then
+  savedInitialScale=math.floor(math.clamp(data.scale,.65,1.15)*100+.5)
+ end
+end
+slider(pages.Config,'Tamanho do painel (%)',65,115,savedInitialScale,function(v)
+ local scale=v/100
+ local sizing=menu:FindFirstChild('KIRA_PainelEscala')
+ if sizing then
+  sizing:SetAttribute('EscalaEscolhida',scale)
+  local viewport=workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(800,480)
+  local maximum=1.15
+  sizing.Scale=math.min(scale,math.max(.32,maximum))
+ end
+ if savePanelLayout then savePanelLayout() end
+end)
+slider(pages.Config,'Brilho do contorno (%)',0,100,45,function(v)
+ local line=menu:FindFirstChildOfClass('UIStroke')
+ if line then line.Transparency=math.clamp(1-(v/100)*.9,.1,1) end
+end)
+-- ===== CONFIG / LIMPEZA =====
+do -- Escopo de temas personalizaveis
+section(pages.Config,'TEMAS PREMIUM')
+local themeOptions={
+ {name='Roxo Kira',bg=Color3.fromRGB(10,7,17),side=Color3.fromRGB(18,12,29),button=Color3.fromRGB(28,19,42),accent=Color3.fromRGB(168,62,255)},
+ {name='Roxo Neon',bg=Color3.fromRGB(13,8,25),side=Color3.fromRGB(26,17,43),button=Color3.fromRGB(53,33,79),accent=Color3.fromRGB(190,95,255)},
+ {name='Vermelho Neon',bg=Color3.fromRGB(23,8,11),side=Color3.fromRGB(40,17,21),button=Color3.fromRGB(79,30,37),accent=Color3.fromRGB(255,75,95)},
+ {name='Dourado',bg=Color3.fromRGB(17,14,9),side=Color3.fromRGB(35,29,17),button=Color3.fromRGB(67,54,29),accent=Color3.fromRGB(245,192,70)}
+}
+local themeIndex=1
+local function applyTheme(t)
+ COLOR.bg=t.bg;COLOR.side=t.side;COLOR.button=t.button;COLOR.accent=t.accent
+ menu.BackgroundColor3=t.bg
+ sidebar.BackgroundColor3=t.side
+ content.BackgroundColor3=t.side
+ mini.BackgroundColor3=t.button
+ for name,b in pairs(nav) do
+  local selected=pages[name].Visible
+  b.BackgroundColor3=selected and Color3.fromRGB(33,34,36) or t.bg
+  b.Indicador.BackgroundColor3=t.accent
+  b.Indicador.Visible=selected
+  b.Icone.TextColor3=selected and t.accent or COLOR.gray
+  b.Nome.TextColor3=selected and COLOR.white or COLOR.gray
+ end
+ for _,page in pairs(pages) do
+  for _,obj in ipairs(page:GetDescendants()) do
+   if obj:IsA('TextButton') and not obj:FindFirstChild('Status') then obj.BackgroundColor3=t.button end
+  end
+ end
+end
+button(pages.Config,'Tema: Roxo Kira',function(b)
+ themeIndex=themeIndex%#themeOptions+1
+ local theme=themeOptions[themeIndex]
+ applyTheme(theme)
+ b.Text='Tema: '..theme.name
+end)
+note(pages.Config,'Padrao: preto com roxo neon. Temas alternativos opcionais.')
+end -- fim dos temas personalizaveis
+section(pages.Config,'DESEMPENHO')
+local fpsOverlay=text(gui,'',12,UDim2.new(0,15,0,55),UDim2.fromOffset(155,26))
+fpsOverlay.TextXAlignment=Enum.TextXAlignment.Left
+fpsOverlay.Visible=false
+-- ===== CONFIGURACOES: UTILIDADES LOCAIS (ANTES NA ABA DONO) =====
+do
+ local pg=pages.Config
+ local isOwner=true -- Ferramentas acessiveis em Configuracoes
+ if isOwner then
+  section(pg,'OUTRAS FERRAMENTAS')
+  note(pg,'Ferramentas locais; nao concedem permissoes de administrador no servidor.')
+  section(pg,'CAMERA E JOGADORES')
+  local observing=nil
+  local selectedSpectate=nil
+  local spectateSelect=button(pg,'SELECIONAR JOGADOR  ▼',function() end)
+  local spectateList=make('ScrollingFrame',{
+   Size=UDim2.new(1,0,0,165),BackgroundColor3=COLOR.button,
+   BackgroundTransparency=.12,BorderSizePixel=0,ScrollBarThickness=3,
+   CanvasSize=UDim2.fromOffset(0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y,
+   LayoutOrder=nextOrder(pg),Visible=false
+  },pg)
+  rounded(spectateList,8)
+  make('UIListLayout',{SortOrder=Enum.SortOrder.Name,Padding=UDim.new(0,4)},spectateList)
+  local function refreshSpectateList()
+   for _,child in ipairs(spectateList:GetChildren()) do
+    if child:IsA('TextButton') then child:Destroy() end
+   end
+   for _,pl in ipairs(Players:GetPlayers()) do
+    if pl~=LocalPlayer then
+     local item=make('TextButton',{
+      Name=pl.Name,Text=pl.DisplayName..'  (@'..pl.Name..')',
+      Size=UDim2.new(1,-5,0,34),TextSize=12,Font=Enum.Font.Gotham,
+      TextColor3=COLOR.white,BackgroundColor3=COLOR.side,BorderSizePixel=0
+     },spectateList)
+     rounded(item,6)
+     listen(item.MouseButton1Click,function()
+      selectedSpectate=pl
+      spectateSelect.Text='ALVO: '..pl.DisplayName..'  ▼'
+      spectateList.Visible=false
+     end)
+    end
+   end
+  end
+  listen(spectateSelect.MouseButton1Click,function()
+   spectateList.Visible=not spectateList.Visible
+   if spectateList.Visible then refreshSpectateList() end
+  end)
+  listen(Players.PlayerAdded,function()
+   if spectateList.Visible then refreshSpectateList() end
+  end)
+  local function stopOwnerSpectate()
+   observing=nil
+   local cam=workspace.CurrentCamera
+   local h=LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass('Humanoid')
+   if cam and h then cam.CameraType=Enum.CameraType.Custom;cam.CameraSubject=h end
+  end
+  button(pg,'Assistir jogador selecionado',function()
+   local pl=selectedSpectate
+   if not pl or pl.Parent~=Players then notify('Selecione um jogador na lista');return end
+   local h=pl.Character and pl.Character:FindFirstChildOfClass('Humanoid')
+   local cam=workspace.CurrentCamera
+   if not h or not cam then notify('Personagem indisponivel');return end
+   cam.CameraType=Enum.CameraType.Custom;cam.CameraSubject=h
+   observing=pl
+   notify('Assistindo '..pl.Name)
+  end)
+  button(pg,'Parar de assistir',function()
+   stopOwnerSpectate();notify('Camera restaurada')
+  end)
+  listen(Players.PlayerRemoving,function(pl)
+   if pl==observing then stopOwnerSpectate() end
+   if pl==selectedSpectate then
+    selectedSpectate=nil
+    spectateSelect.Text='SELECIONAR JOGADOR  ▼'
+   end
+   if spectateList.Visible then task.defer(refreshSpectateList) end
+  end)
+  slider(pg,'FOV da camera',40,120,70,function(v)
+   local c=workspace.CurrentCamera;if c then c.FieldOfView=v end
+  end)
+  section(pg,'VISUAL')
+  local ownerLight=false
+  toggle(pg,'FullBright (local)',false,function(v)
+   ownerLight=v
+   Lighting.Brightness=v and 4 or originals.brightness
+   Lighting.Ambient=v and Color3.new(1,1,1) or originals.ambient
+  end)
+  toggle(pg,'Modo noturno (local)',false,function(v)
+   Lighting.ClockTime=v and 0 or originals.clock
+  end)
+  section(pg,'POSICOES')
+  local ownerPos=nil
+  button(pg,'Salvar posicao',function()
+   local root=LocalPlayer.Character and LocalPlayer.Character:FindFirstChild('HumanoidRootPart')
+   if root then ownerPos=root.CFrame;notify('Posicao salva') else notify('Personagem indisponivel') end
+  end)
+  button(pg,'Voltar a posicao salva',function()
+   local root=LocalPlayer.Character and LocalPlayer.Character:FindFirstChild('HumanoidRootPart')
+   if root and ownerPos then teleportarSeguro(ownerPos,'Posicao restaurada') else notify('Salve uma posicao primeiro') end
+  end)
+  button(pg,'Copiar coordenadas',function()
+   local root=LocalPlayer.Character and LocalPlayer.Character:FindFirstChild('HumanoidRootPart')
+   if not root then notify('Personagem indisponivel');return end
+   local v=root.Position
+   local t=string.format('%.1f, %.1f, %.1f',v.X,v.Y,v.Z)
+   if type(setclipboard)=='function' then
+    local ok=pcall(setclipboard,t);notify(ok and 'Coordenadas copiadas' or t)
+   else notify(t) end
+  end)
+  section(pg,'HUD E MONITORES')
+  note(pg,'Ative o HUD Ping/CPS e o HUD WASD nas Configuracoes. Os dois comecam desligados.')
+  section(pg,'PERFIL E SISTEMA')
+  button(pg,'Ver perfil',function()
+   notify('PERFIL: '..LocalPlayer.Name..' | ID: '..tostring(LocalPlayer.UserId))
+  end)
+  button(pg,'Reconectar',function()
+   local ok=pcall(function() game:GetService('TeleportService'):TeleportToPlaceInstance(game.PlaceId,game.JobId,LocalPlayer) end)
+   if not ok then notify('Reconexao indisponivel') end
+  end)
+  button(pg,'Abrir ajustes e atalhos',function()
+   show('Config')
+  end)
+  note(pg,'KIRA MENU - ferramentas adicionais da configuracao.')
+ end
+end
+
+toggle(pages.Config,'Mostrar FPS na tela',false,function(v) fpsOverlay.Visible=v end)
+section(pages.Config,'MUNDO E VISUAL')
+slider(pages.Config,'Horario local',0,24,14,function(v) settings.clock=v;Lighting.ClockTime=v end)
+toggle(pages.Config,'FullBright (local)',false,function(v)
+ settings.fullBright=v
+ Lighting.Brightness=v and 4 or originals.brightness
+ Lighting.Ambient=v and COLOR.white or originals.ambient
+end)
+button(pages.Config,'Restaurar iluminacao',function()
+ Lighting.ClockTime=originals.clock;Lighting.Brightness=originals.brightness;Lighting.Ambient=originals.ambient
+ notify('Iluminacao restaurada')
+end)
+-- Controle local da nevoa: guarda os valores para restaurar.
+do -- Escopo isolado: controles de nevoa e utilidades
+local originalFogStart,originalFogEnd=Lighting.FogStart,Lighting.FogEnd
+local removeFog=false
+toggle(pages.Config,'Remover nevoa (local)',false,function(v)
+ removeFog=v
+ Lighting.FogStart=v and 0 or originalFogStart
+ Lighting.FogEnd=v and 100000 or originalFogEnd
+end)
+-- Extras de utilidade: funcionam no cliente e nao prometem poderes de servidor.
+section(pages.Config,'EXTRAS DO KIRA')
+local TeleportService=game:GetService('TeleportService')
+button(pages.Config,'Reconectar ao jogo',function()
+ notify('Tentando reconectar...')
+ local ok,err=pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId,game.JobId,LocalPlayer) end)
+ if not ok then notify('Nao foi possivel reconectar: '..tostring(err):sub(1,65)) end
+end)
+button(pages.Config,'Copiar ID do jogo',function()
+ if type(setclipboard)=='function' then
+  local ok=pcall(setclipboard,tostring(game.PlaceId))
+  notify(ok and 'ID do jogo copiado' or 'Nao foi possivel copiar')
+ else notify('Copiar nao disponivel neste executor') end
+end)
+button(pages.Config,'Copiar ID do servidor',function()
+ if type(setclipboard)=='function' then
+  local ok=pcall(setclipboard,tostring(game.JobId))
+  notify(ok and 'ID do servidor copiado' or 'Nao foi possivel copiar')
+ else notify('Copiar nao disponivel neste executor') end
+end)
+end -- Fim do escopo de nevoa e utilidades
+-- Boost/reducao de efeitos removido: evita custo e estados ocultos.
+-- HUD DE TECLAS: somente W A S D, sem nomes ou etiquetas.
+do -- Escopo isolado: HUD de teclas
+local keysHud=make('Frame',{
+ Name='JS_KeysHUD',Size=UDim2.fromOffset(128,94),
+ Position=UDim2.new(1,-154,1,-130),BackgroundTransparency=1,
+ Visible=false,ZIndex=70
+},gui)
+local keysSquares={}
+local keyPositions={W=UDim2.fromOffset(44,0),A=UDim2.fromOffset(0,46),S=UDim2.fromOffset(44,46),D=UDim2.fromOffset(88,46)}
+for letter,pos in pairs(keyPositions) do
+ local tile=make('TextLabel',{
+  Name=letter,Position=pos,Size=UDim2.fromOffset(40,40),
+  BackgroundColor3=Color3.fromRGB(30,30,34),BackgroundTransparency=.12,
+  BorderSizePixel=0,Text=letter,Font=Enum.Font.GothamBold,TextSize=19,
+  TextColor3=Color3.fromRGB(230,230,230),ZIndex=71
+ },keysHud)
+ rounded(tile,7)
+ keysSquares[letter]=tile
+end
+local function keySquare(letter,pressed)
+ local tile=keysSquares[letter]
+ if tile then
+  tile.BackgroundColor3=pressed and Color3.fromRGB(240,240,240) or Color3.fromRGB(30,30,34)
+  tile.TextColor3=pressed and Color3.fromRGB(15,15,15) or Color3.fromRGB(230,230,230)
+ end
+end
+local keyOverlayEnabled=false
+toggle(pages.Config,'HUD W A S D',false,function(v)
+ keyOverlayEnabled=v;keysHud.Visible=v
+ if not v then for letter in pairs(keysSquares) do keySquare(letter,false) end end
+end)
+listen(UIS.InputBegan,function(input)
+ if not keyOverlayEnabled or input.UserInputType~=Enum.UserInputType.Keyboard then return end
+ local letter=input.KeyCode.Name
+ if keysSquares[letter] then keySquare(letter,true) end
+end)
+listen(UIS.InputEnded,function(input)
+ if input.UserInputType~=Enum.UserInputType.Keyboard then return end
+ local letter=input.KeyCode.Name
+ if keysSquares[letter] then keySquare(letter,false) end
+end)
+end -- Fim do escopo HUD de teclas
+section(pages.Config,'TECLAS PERSONALIZADAS')
+note(pages.Config,'Defina a tecla de ABRIR/FECHAR. O atalho fica salvo pelo seu ID entre execucoes se o executor permitir arquivos. ESC limpa outros atalhos.')
+local waitingForKey=nil
+local keyButtons={}
+local function keyName(k)
+ return k and k.Name or 'NENHUMA'
+end
+local function refreshKeyButtons()
+ for action,b in pairs(keyButtons) do
+  b.Text=(action=='menu' and 'ABRIR/FECHAR PAINEL' or action=='fly' and 'FLY ON/OFF' or 'INVISIVEL ON/OFF')..'  ['..keyName(keybinds[action])..']'
+ end
+ updateKeyPanel()
+end
+for _,action in ipairs({'menu','fly','invisible'}) do
+ local b=button(pages.Config,'',function()
+  waitingForKey=action
+  keyButtons[action].Text='PRESSIONE UMA TECLA... (ESC = LIMPAR)'
+ end)
+ keyButtons[action]=b
+end
+refreshKeyButtons()
+section(pages.Config,'CONTROLE DO FLY')
+note(pages.Config,'Fly no PC: W A S D para andar, Espaco para subir e Ctrl para descer. A roda do mouse aumenta/diminui a velocidade.')
+section(pages.Config,'INFORMACOES')
+local statusInfo=note(pages.Config,'FPS / ping: carregando...')
+-- O modo terminal e apenas visual. A limpeza real ocorre ao final.
+section(pages.Bypass,'MODO TERMINAL')
+note(pages.Bypass,'Animacao CMD local seguida de encerramento do painel e overlays. Nao contorna anticheat.')
+section(pages.Bypass,'ENCERRAR')
+note(pages.Bypass,'Destruir o painel encerra as conexoes e restaura recursos locais.')
+local function cleanup()
+ if settings.restoreTelaParada then settings.restoreTelaParada() end
+ if not alive then return end
+ -- Captura a ultima configuracao ANTES de restaurar as propriedades do jogo.
+ settings.tabState.capture()
+ settings.pref.freezeAndSave()
+ if settings.resetVisualLocal then pcall(settings.resetVisualLocal) end
+ alive=false
+ settings.fly=false;settings.infinity=false;settings.noclip=false;settings.hitboxHead=false;settings.hitboxBody=false;restoreHitboxes();settings.fling=false;settings.spin=false;invisOn=false;stopFlyPhysics();stopFling();stopSpin()
+ settings.clearNoclip()
+ for part,value in pairs(partTransparency) do if part.Parent then pcall(function() part.LocalTransparencyModifier=value end) end end
+ clearESP()
+ pcall(function() Run:UnbindFromRenderStep(espRenderBindingName) end)
+ if espGui and espGui.Parent then espGui:Destroy() end
+ workspace.Gravity=originals.gravity
+ Lighting.ClockTime=originals.clock;Lighting.Brightness=originals.brightness;Lighting.Ambient=originals.ambient
+ local h=humanoid();if h then h.WalkSpeed=16;h.UseJumpPower=true;h.JumpPower=50 end
+ local r=root();if r then r.AssemblyLinearVelocity=Vector3.zero end
+ LocalPlayer.CameraMode=originals.cameraMode
+ Camera=workspace.CurrentCamera
+ if Camera then Camera.FieldOfView=originals.cameraFOV end
+ for _,c in ipairs(conn) do pcall(function() c:Disconnect() end) end
+ gui:Destroy()
+ if _G.VELOSO_DESTROY==cleanup then _G.VELOSO_DESTROY=nil end
+ if _G.CHAT_MENU_DESTROY==cleanup then _G.CHAT_MENU_DESTROY=nil end
+end
+_G.CHAT_MENU_DESTROY=cleanup
+_G.VELOSO_DESTROY=cleanup
+button(pages.Bypass,'ESCONDER KIRA MENU',function()
+ menu.Visible=false
+ menuOpen=false
+end)
+-- Animacao terminal antiga mantida no codigo mas nao exibida no menu.
+local terminalLegacyButton=button(pages.Bypass,'EXECUTAR MODO TERMINAL',function()
+ if not alive then return end
+ menu.Visible=false
+ menuOpen=false
+ toast.Visible=false
+ local terminal=make('Frame',{Name='TerminalVisual',AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(590,315),BackgroundColor3=Color3.fromRGB(5,6,8),BorderSizePixel=0,ZIndex=50},gui)
+ rounded(terminal,7)
+ make('UIStroke',{Color=Color3.fromRGB(85,85,85),Thickness=1},terminal)
+ local head=text(terminal,'KIRA TERMINAL  |  ENCERRAMENTO LOCAL',14,UDim2.fromOffset(16,12),UDim2.new(1,-32,0,30))
+ head.TextXAlignment=Enum.TextXAlignment.Left
+ local output=text(terminal,'',13,UDim2.fromOffset(17,51),UDim2.new(1,-34,1,-65))
+ output.Font=Enum.Font.Code
+ output.TextXAlignment=Enum.TextXAlignment.Left
+ output.TextYAlignment=Enum.TextYAlignment.Top
+ local messages={
+  '[KIRA] Solicitacao de encerramento recebida',
+  '[LOCAL] Preparando restauracao de propriedades',
+  '[LOCAL] Desconectando recursos e overlays',
+  '[LOCAL] Encerrando interface...',
+ }
+ task.spawn(function()
+  for _,line in ipairs(messages) do
+   if not alive then return end
+   output.Text=output.Text..line..'\n'
+   task.wait(.42)
+  end
+  if alive then cleanup() end
+ end)
+end)
+terminalLegacyButton.Visible=false
+button(pages.Bypass,'Destruir painel e desligar recursos',function() cleanup() end)
+-- KIRA: ocultar extras que nao fazem parte da lista acordada.
+-- Sem apagar os sistemas base nem reconstruir toda a interface.
+do
+ local hiddenPatterns={
+  'fps boost','reduzir efeitos','freecam','tela parada',
+  'hud ping','hud w a s d','dash para frente','forca do dash',
+  'pulo duplo','fling','invisivel (somente local)',
+  'sentar / levantar','tamanho r15','resetar personagem',
+  'editor de mira','crosshair','ponto de mira',
+  'remover nevoa','reconectar ao jogo',
+  'horario local','fullbright','camera livre',
+  'modo fantasma (aparencia)'
+ }
+ for _,page in pairs(pages) do
+  for _,item in ipairs(page:GetChildren()) do
+   if item:IsA('GuiObject') then
+    local texts={}
+    if item:IsA('TextButton') or item:IsA('TextLabel') then
+     table.insert(texts,string.lower(item.Text))
+    end
+    for _,desc in ipairs(item:GetDescendants()) do
+     if desc:IsA('TextButton') or desc:IsA('TextLabel') then
+      table.insert(texts,string.lower(desc.Text))
+     end
+    end
+    local combined=table.concat(texts,' ')
+    for _,pattern in ipairs(hiddenPatterns) do
+     if string.find(combined,pattern,1,true) then
+      item.Visible=false
+      item:SetAttribute('KiraHidden',true)
+      break
+     end
+    end
+   end
+  end
+ end
+end
+-- Controle unico de som no fim da aba Config, logo antes de destruir.
+section(pages.Config,'SOM DO PAINEL')
+slider(pages.Config,'Volume do painel (%)',0,100,uiSoundVolume,function(v)
+ uiSoundVolume=v
+ savePanelVolume()
+end)
+note(pages.Config,'Controle os sons de clique, ativacao e desativacao. Nao ha voz no painel.')
+button(pages.Config,'DESTRUIR PAINEL',function()
+ if not alive then return end
+ -- Fecha imediatamente, restaura modificacoes e desconecta eventos.
+ cleanup()
+end)
+note(pages.Config,'Preferencias locais quando o ambiente oferece arquivos. Sem conexao com site externo.')
+
+do -- Escopo dos ciclos de atualizacao
+ local function configurarLoops()
+-- ===== LOOPS DE FUNCOES =====
+listen(UIS.JumpRequest,function()
+ if settings.infinity then local h=humanoid();if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end end
+end)
+-- Noclip local: acompanha novas partes, respawn e alteracoes de colisao.
+-- Jogos que validam colisao no servidor podem impedir o efeito.
+-- Mantem as colisoes locais desativadas sem mudar objetos do mapa.
+-- Reseta a lista a cada respawn e restaura ao desativar.
+local noclipCharacter=nil
+local noclipCharacterConnection=nil
+settings.clearNoclip=function()
+ for part,original in pairs(partCanCollide) do
+  if part and part.Parent then pcall(function() part.CanCollide=original end) end
+ end
+ table.clear(partCanCollide)
+end
+local function noclipPart(part)
+ if not settings.noclip or not part:IsA('BasePart') then return end
+ if partCanCollide[part]==nil then partCanCollide[part]=part.CanCollide end
+ if part.CanCollide then pcall(function() part.CanCollide=false end) end
+end
+settings.refreshNoclip=function()
+ if not alive or not settings.noclip then return end
+ local c=character()
+ if not c then return end
+ if c~=noclipCharacter then
+  if noclipCharacterConnection then noclipCharacterConnection:Disconnect() end
+  settings.clearNoclip()
+  noclipCharacter=c
+  noclipCharacterConnection=c.DescendantAdded:Connect(function(part)
+   if alive and settings.noclip then noclipPart(part) end
+  end)
+  table.insert(conn,noclipCharacterConnection)
+ end
+ for _,part in ipairs(c:GetDescendants()) do noclipPart(part) end
+end
+-- Antes da simulacao e depois da fisica, para jogos que recriam colisoes.
+listen(Run.Stepped,function() settings.refreshNoclip() end)
+local noclipVerify=0
+listen(Run.Heartbeat,function(dt)
+ if not alive or not settings.noclip then return end
+ noclipVerify=noclipVerify+dt
+ if noclipVerify>=.16 then noclipVerify=0;settings.refreshNoclip() end
+end)
+listen(LocalPlayer.CharacterAdded,function()
+ if noclipCharacterConnection then noclipCharacterConnection:Disconnect();noclipCharacterConnection=nil end
+ noclipCharacter=nil
+ settings.clearNoclip()
+ task.defer(settings.refreshNoclip)
+end)
+local invisTick=0
+local espTick=0
+local espLastErrorAt=-100
+local espWasEnabled=false
+local combatCountTick=0
+local infoTick=0
+local fpsHudTick=0
+local avgFps=60
+listen(Run.RenderStepped,function(dt)
+ if not alive then return end
+ Camera=workspace.CurrentCamera
+ if not Camera then return end
+ avgFps=avgFps*.92+(1/math.max(dt,.001))*.08
+ fpsHudTick=fpsHudTick+dt
+ if fpsHudTick>=.25 then
+  local fpsText='FPS: '..math.floor(avgFps+.5)
+  if fpsOverlay.Visible then fpsOverlay.Text=fpsText end
+  if uiObjects.dashboardFPS and uiObjects.dashboardFPS.Parent then
+   uiObjects.dashboardFPS.Text=fpsText
+  end
+  fpsHudTick=0
+ end
+ invisTick=invisTick+dt
+ if invisOn and invisTick>.15 then
+  invisTick=0
+  local c=character()
+  if c then
+   for _,p in ipairs(c:GetDescendants()) do
+    if p:IsA('BasePart') and p.Name~='HumanoidRootPart' then
+     p.LocalTransparencyModifier=1
+    elseif p:IsA('Decal') then p.Transparency=1 end
+   end
+  end
+ end
+ combatCountTick=combatCountTick+dt
+ if combatCountTick>=.48 then
+  combatCountTick=0
+  if settings.combatCounter then updateCombatCounter() end
+ end
+ -- Crosshair acompanha o centro da tela.
+ if crossh.Visible then
+  crossh.Position=UDim2.fromOffset(Camera.ViewportSize.X/2,Camera.ViewportSize.Y/2)
+ end
+ infoTick=infoTick+dt
+ if infoTick>1 then
+  infoTick=0
+  local ping='--'
+  pcall(function() ping=tostring(math.floor(LocalPlayer:GetNetworkPing()*1000)) end)
+  statusInfo.Text=string.format('FPS: %d  |  Ping: %s ms  |  Jogadores: %d',math.floor(avgFps),ping,#Players:GetPlayers())
+ end
+end)
+-- Atualizacao do ESP APOS a camera. Evita o atraso do desenho em movimentos
+-- rapidos de mouse e separa o custo do ESP do restante da interface.
+pcall(function() Run:UnbindFromRenderStep(espRenderBindingName) end)
+Run:BindToRenderStep(espRenderBindingName,Enum.RenderPriority.Camera.Value+2,function(dt)
+ if not alive then return end
+ Camera=workspace.CurrentCamera
+ if not Camera then return end
+ local espEnabled=ownESPEnabled() or settings.espBox or settings.espLine or settings.espSkeleton
+  or settings.espName or settings.espLife or settings.espDistance
+  or settings.espHighlight
+ if not espEnabled then
+  if espWasEnabled then pcall(updateESP) end
+  espWasEnabled=false
+  espTick=0
+  return
+ end
+ espWasEnabled=true
+ espTick=espTick+dt
+ -- Em PC rapido, acompanha a camera ate 60 vezes por segundo. Em PCs mais
+ -- lentos, adapta a frequencia sem acumular atualizacoes atrasadas.
+ local espInterval=(avgFps>=45) and (1/30) or (1/20)
+ if espTick<espInterval then return end
+ -- Preserva a fracao de tempo restante: zerar aqui fazia 61 FPS virar
+ -- 30 atualizacoes por segundo em vez de acompanhar todos os frames.
+ espTick=math.min(math.max(espTick-espInterval,0),espInterval)
+ local ok,err=pcall(updateESP)
+ if not ok and os.clock()-espLastErrorAt>5 then
+  espLastErrorAt=os.clock()
+  warn('[KIRA MENU / ESP] Erro de renderizacao: '..tostring(err))
+ end
+end)
+listen(Run.Heartbeat,function(dt)
+ if not alive then return end
+ if settings.fly then
+  local r=root();local h=humanoid();local cam=workspace.CurrentCamera
+  if r and h and cam and h.Health>0 then
+   if flyRoot~=r or not flyVelocity or not flyGyro then
+    stopFlyPhysics()
+    flyRoot=r
+    flyOriginalPlatformStand=h.PlatformStand
+    flyOriginalAutoRotate=h.AutoRotate
+    flyVelocity=Instance.new('BodyVelocity')
+    flyVelocity.Name='CHAT_FLY_VELOCITY'
+    flyVelocity.MaxForce=Vector3.new(5e6,5e6,5e6)
+    flyVelocity.P=14000
+    flyVelocity.Velocity=Vector3.zero
+    flyVelocity.Parent=r
+    flyGyro=Instance.new('BodyGyro')
+    flyGyro.Name='CHAT_FLY_GYRO'
+    flyGyro.MaxTorque=Vector3.new(1e8,1e8,1e8)
+    flyGyro.P=35000
+    flyGyro.D=1200
+    flyGyro.CFrame=cam.CFrame
+    flyGyro.Parent=r
+   end
+   -- PlatformStand=true causa quedas/ragdoll em alguns jogos.
+   -- AutoRotate fica falso apenas durante o Fly; BodyGyro cuida da direcao.
+   h.PlatformStand=false
+   h.AutoRotate=false
+   local move=Vector3.zero
+   local forward=cam.CFrame.LookVector
+   local right=cam.CFrame.RightVector
+   if UIS.KeyboardEnabled then
+    if UIS:IsKeyDown(Enum.KeyCode.W) then move=move+forward end
+    if UIS:IsKeyDown(Enum.KeyCode.S) then move=move-forward end
+    if UIS:IsKeyDown(Enum.KeyCode.D) then move=move+right end
+    if UIS:IsKeyDown(Enum.KeyCode.A) then move=move-right end
+   end
+   if move.Magnitude<.05 then
+    local md=h.MoveDirection
+    if md.Magnitude>.05 then move=md end
+   end
+   local up=(settings.flyUp and 1 or 0)-(settings.flyDown and 1 or 0)
+   if UIS:IsKeyDown(Enum.KeyCode.Space) then up=up+1 end
+   if UIS:IsKeyDown(Enum.KeyCode.LeftControl) or UIS:IsKeyDown(Enum.KeyCode.RightControl) then up=up-1 end
+   move=move+Vector3.new(0,up,0)
+   if move.Magnitude>1 then move=move.Unit end
+   local goal=move*settings.flySpeed
+   -- Acima de 1000 o modo de protecao suave nao atua.
+   if settings.flySpeed<=1000 then
+    local speed=goal.Magnitude
+    if speed>1000 then goal=goal.Unit*1000 end
+   end
+   local responsiveness=0.70*(1-settings.flySmooth/100)+0.025
+   local frameAlpha=1-math.pow(1-responsiveness,math.clamp((dt or 1/60)*60,0,4))
+   flyVelocitySmooth=flyVelocitySmooth:Lerp(goal,frameAlpha)
+   flyVelocity.Velocity=flyVelocitySmooth
+   flyGyro.CFrame=CFrame.lookAt(r.Position,r.Position+cam.CFrame.LookVector)
+  else
+   stopFlyPhysics()
+  end
+ elseif flyVelocity or flyGyro then
+  stopFlyPhysics()
+ end
+end)
+listen(LocalPlayer.CharacterAdded,function()
+ stopFlyPhysics()
+ stopFling()
+ settings.spin=false
+ setSpinToggle(false)
+ spinSavedAutoRotate=nil
+ spinSavedRotation=nil
+ spinRoot=nil
+ spinAngle=0
+ task.wait(.7)
+ if alive then
+  applyMovement()
+  if invisOn then setInvisible(true) end
+  if settings.ghost and not invisOn then
+   local c=character()
+   if c then for _,p in ipairs(c:GetDescendants()) do if p:IsA('BasePart') and p.Name~='HumanoidRootPart' then p.LocalTransparencyModifier=.55 end end end
+  end
+ end
+end)
+
+ end
+ configurarLoops()
+end -- fim dos ciclos de atualizacao
+
+-- Menu apenas para PC: reabre pelo atalho do teclado, sem bolinha na tela.
+
+
+do
+ local function prepararPainelFlutuante()
+-- ===== BOTAO FLUTUANTE =====
+local openScale=make('UIScale',{Name='KIRA_PainelEscala',Scale=1},menu)
+local function fitScaleForDevice()
+ local vp=workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280,720)
+ return math.clamp(math.min((vp.X-22)/960,(vp.Y-26)/550),.42,1.15)
+end
+local menuAnimating=false
+-- Preferencias de layout compartilhadas entre todos os jogos.
+local layoutFile='KIRA_LAYOUT_'..tostring(LocalPlayer.UserId)..'.json'
+local menuHomePosition=menu.Position
+-- Tamanho, volume e tecla de abrir/fechar sao persistentes por UserId.
+-- Posicao e estados de toggles continuam com valores padrao.
+local function restorePanelLayout()
+ if type(readfile)~='function' then return end
+ local ok,data=pcall(function() return HttpService:JSONDecode(readfile(layoutFile)) end)
+ if not ok or type(data)~='table' then return end
+ if type(data.scale)=='number' then
+  local v=math.clamp(data.scale,.65,1.15)
+  openScale:SetAttribute('EscalaEscolhida',v)
+  openScale.Scale=math.min(v,fitScaleForDevice())
+ end
+end
+savePanelLayout=function()
+ if type(writefile)~='function' then return end
+ local payload={scale=tonumber(openScale:GetAttribute('EscalaEscolhida')) or openScale.Scale}
+ pcall(function() writefile(layoutFile,HttpService:JSONEncode(payload)) end)
+end
+restorePanelLayout()
+openScale.Scale=math.min(openScale.Scale,fitScaleForDevice())
+local menuHomeAnchor=menu.AnchorPoint
+-- Esconde o menu ao minimizar; atalho do PC restaura sem botao flutuante.
+local function menuBelowScreen()
+ return UDim2.new(menuHomePosition.X.Scale,menuHomePosition.X.Offset,1.4,0)
+end
+local function setMenuOpen(v)
+ if menuAnimating or not alive or menuOpen==v then return end
+ menuAnimating=true
+ tapSound()
+ local target=math.min(tonumber(openScale:GetAttribute('EscalaEscolhida')) or 1,fitScaleForDevice())
+ if v then
+  menu.AnchorPoint=menuHomeAnchor
+  menu.Position=menuBelowScreen()
+  openScale.Scale=target*.78
+  menu.Visible=true
+  if uiMotion then
+   local move=tween(menu,.85,{Position=menuHomePosition})
+   tween(openScale,.85,{Scale=target})
+   move.Completed:Wait()
+  else
+   menu.Position=menuHomePosition
+   openScale.Scale=target
+  end
+  if alive then
+   menuOpen=true
+   if not settings.tabState.ready then settings.tabState.enable()
+   else settings.tabState.restoreScroll(settings.tabState.current) end
+  end
+ else
+  if uiMotion then
+   local move=tween(menu,.85,{Position=menuBelowScreen()})
+   tween(openScale,.85,{Scale=target*.78})
+   move.Completed:Wait()
+  end
+  if alive then
+   menu.Visible=false
+   menu.Position=menuHomePosition
+   openScale.Scale=target
+   menuOpen=false
+  end
+ end
+ menuAnimating=false
+ updateKeyPanel()
+end
+listen(mini.MouseButton1Click,function() setMenuOpen(false) end)
+-- Atalhos continuam configuraveis: a tecla E reabre o menu por padrao.
+updateKeyPanel=function() end
+refreshKeyButtons()
+local function toggleFlyKey()
+ settings.fly=not settings.fly
+ settings.flyUp=false;settings.flyDown=false
+ if not settings.fly then stopFlyPhysics() end
+ if setFlyToggle then setFlyToggle(settings.fly) end
+ playPanelSound(settings.fly and 'enabled' or 'disabled')
+ notify('Fly '..(settings.fly and 'ON' or 'OFF'))
+ updateKeyPanel()
+end
+listen(UIS.InputBegan,function(input,processed)
+ if waitingForKey then
+  if input.UserInputType~=Enum.UserInputType.Keyboard then return end
+  local action=waitingForKey
+  waitingForKey=nil
+  if input.KeyCode~=Enum.KeyCode.Escape then
+   for a,k in pairs(keybinds) do
+    if a~=action and k==input.KeyCode then keybinds[a]=nil end
+   end
+   keybinds[action]=input.KeyCode
+  elseif action~='menu' then
+   keybinds[action]=nil
+  end
+  if action=='menu' then
+   if saveMenuHotkey() then
+    notify('Tecla do painel salva para seu ID: '..keyName(keybinds.menu))
+   else
+    notify('Tecla alterada; o executor nao permitiu salvar em arquivo')
+   end
+  end
+  refreshKeyButtons()
+  return
+ end
+ if processed or UIS:GetFocusedTextBox() or input.UserInputType~=Enum.UserInputType.Keyboard then return end
+ if keybinds.menu and input.KeyCode==keybinds.menu then
+  setMenuOpen(not menuOpen)
+ elseif keybinds.fly and input.KeyCode==keybinds.fly then
+  toggleFlyKey()
+ elseif keybinds.invisible and input.KeyCode==keybinds.invisible then
+  setInvisible(not invisOn)
+  setInvisToggle(invisOn)
+  updateKeyPanel()
+ end
+end)
+listen(UIS.InputChanged,function(input,processed)
+ if settings.fly and input.UserInputType==Enum.UserInputType.MouseWheel and not processed then
+  settings.flySpeed=math.clamp(settings.flySpeed+input.Position.Z*20,0,1000)
+  setFlySpeedSlider(settings.flySpeed)
+  notify('Fly velocidade: '..math.floor(settings.flySpeed))
+ end
+end)
+drag(menu,header,function(pos)
+ menuHomePosition=pos
+ savePanelLayout()
+end)
+-- ===== KIRA MENU / BLUE METALLIC 3D (visual only) =====
+-- Tiny UI elements: no RenderStepped, no expensive image effects.
+do
+ local silver=Color3.fromRGB(174,111,232)
+ local function stripe(parent,where,dimensions,col,alpha,z)
+  return make('Frame',{
+   Position=where,Size=dimensions,BackgroundColor3=col or silver,
+   BackgroundTransparency=alpha or 0,BorderSizePixel=0,
+   ZIndex=z or 2,Active=false
+  },parent)
+ end
+ -- Moldura retangular com linhas finas e bem discretas.
+ stripe(menu,UDim2.fromOffset(0,73),UDim2.new(1,0,0,1),silver,.72,3)
+ stripe(menu,UDim2.fromOffset(15,80),UDim2.fromOffset(3,42),silver,.28,3)
+ stripe(menu,UDim2.new(1,-19,0,81),UDim2.fromOffset(3,42),silver,.28,3)
+ -- Side navigation has a real section label. No emojis or massive ornaments.
+ local sideCaption=text(menu,'N A V E G A Ç Ã O',9,
+  UDim2.fromOffset(28,85),UDim2.fromOffset(174,18))
+ sideCaption.Font=Enum.Font.GothamMedium
+ sideCaption.TextXAlignment=Enum.TextXAlignment.Left
+ sideCaption.TextColor3=Color3.fromRGB(149,149,157)
+ sideCaption.ZIndex=3
+ -- O cabecalho reserva a parte direita para a pesquisa; sem texto por cima.
+ -- Fine dividers and a status footer do not overlap scroll content.
+ stripe(menu,UDim2.new(0,229,1,-12),UDim2.new(1,-248,0,1),silver,.84,2)
+ local footer=text(menu,'KIRA MENU   •   BLACK & PURPLE PREMIUM   /   BY JS',9,
+  UDim2.new(0,235,1,-31),UDim2.new(1,-370,0,15))
+ footer.TextColor3=Color3.fromRGB(140,140,150)
+ footer.TextXAlignment=Enum.TextXAlignment.Right
+ footer.Font=Enum.Font.GothamMedium
+ -- Subtle chrome vertical line between navigation and options.
+ stripe(menu,UDim2.fromOffset(219,101),UDim2.new(0,1,1,-115),silver,.82,2)
+ uiObjects.dashboardFPS=text(menu,'FPS: --',11,
+  UDim2.new(1,-117,1,-38),UDim2.fromOffset(103,27))
+ uiObjects.dashboardFPS.Font=Enum.Font.GothamBold
+ uiObjects.dashboardFPS.TextColor3=YELLOW
+ uiObjects.dashboardFPS.BackgroundTransparency=0
+ uiObjects.dashboardFPS.BackgroundColor3=Color3.fromRGB(19,22,27)
+ uiObjects.dashboardFPS.TextXAlignment=Enum.TextXAlignment.Center
+ rounded(uiObjects.dashboardFPS,7)
+ make('UIStroke',{Color=YELLOW,Thickness=1,Transparency=.43},uiObjects.dashboardFPS)
+ bevelEdges(uiObjects.dashboardFPS)
+ -- Page content remains readable under soft hairlines.
+ local line=make('Frame',{
+  Name='BrilhoDaSecao',Position=UDim2.fromOffset(15,39),
+  Size=UDim2.new(1,-30,0,1),BackgroundColor3=silver,
+  BackgroundTransparency=.76,BorderSizePixel=0,ZIndex=2,Active=false
+ },content)
+ make('UIGradient',{Color=ColorSequence.new({
+  ColorSequenceKeypoint.new(0,Color3.fromRGB(75,80,93)),
+  ColorSequenceKeypoint.new(.5,Color3.fromRGB(223,232,245)),
+  ColorSequenceKeypoint.new(1,Color3.fromRGB(75,80,93))
+ })},line)
+end
+-- ===== END NOVEMBER DESIGN =====
+
+-- Ajustes de TODAS as abas no painel externo, sem recriar callbacks.
+-- Move somente sliders existentes (e seus listeners), nao cria loops novos.
+for _,which in ipairs({'Principais','Hitbox','Teleporte','Bypass','Config'}) do
+ local pg=pages[which]
+ local group=espSettingsContainers[which]
+ if pg and group then
+  local candidates={}
+  for _,child in ipairs(pg:GetChildren()) do
+   if child:IsA('Frame') and child:FindFirstChildOfClass('TextLabel') then
+    local hasTrack=false
+    for _,desc in ipairs(child:GetDescendants()) do
+     if desc:IsA('Frame') and desc.Active and desc.AbsoluteSize.Y<=14 then
+      hasTrack=true;break
+     end
+    end
+    if hasTrack then table.insert(candidates,child) end
+   end
+  end
+  table.sort(candidates,function(a,b) return a.LayoutOrder<b.LayoutOrder end)
+  for _,control in ipairs(candidates) do moveEspSetting(which,control) end
+ end
+end
+-- FOV: raio, espessura e cores ficam juntos nos ajustes externos do Combate.
+for _,child in ipairs(pages.Hitbox:GetChildren()) do
+ if child:IsA('TextButton') and (child.Text:find('Cor do FOV',1,true) or child.Text:find('FOV RGB',1,true)) then
+  moveEspSetting('Hitbox',child)
+ end
+end
+-- Mini painel de atalhos removido. Teclas ainda ajustaveis em Config.
+show((pages[settings.tabState.initial] and settings.tabState.initial) or 'Principais')
+-- Reativa os controles salvos pelo UserId apos todos os modulos existirem.
+settings.pref.restore()
+
+-- Abre diretamente no painel: sem intro, key, logo antiga ou loading.
+task.defer(function()
+ if alive then setMenuOpen(true) end
+end)
+
+ end
+ prepararPainelFlutuante()
+end
+end)() -- fim da inicializacao dos modulos UI
+
+end,function(err)
+ warn('[KIRA MENU V1] ERRO AO INICIAR: '..tostring(err))
+ return tostring(err)
+end)
+if not __kira_ok then
+ pcall(function()
+  local plr=game:GetService('Players').LocalPlayer
+  local gui=Instance.new('ScreenGui')
+  gui.Name='KIRA_ERRO_INICIALIZACAO'
+  gui.ResetOnSpawn=false
+  gui.DisplayOrder=10000
+  gui.Parent=plr:WaitForChild('PlayerGui')
+  local box=Instance.new('TextLabel')
+  box.Size=UDim2.fromOffset(650,95)
+  box.Position=UDim2.new(.5,-325,0,24)
+  box.BackgroundColor3=Color3.fromRGB(35,8,45)
+  box.TextColor3=Color3.fromRGB(255,220,240)
+  box.TextWrapped=true
+  box.TextSize=14
+  box.Font=Enum.Font.GothamBold
+  box.Text='KIRA MENU V1 - ERRO DE INICIALIZACAO\n'..tostring(__kira_err)
+  box.Parent=gui
+ end)
+end
