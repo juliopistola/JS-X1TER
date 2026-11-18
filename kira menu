@@ -3558,6 +3558,56 @@ local function cleanup()
 end
 _G.CHAT_MENU_DESTROY=cleanup
 _G.VELOSO_DESTROY=cleanup
+-- Terminal visual de encerramento: mensagens de progresso antes da limpeza real.
+local encerrandoKira=false
+local function destruirComTerminal()
+ if not alive or encerrandoKira then return end
+ encerrandoKira=true
+ menu.Visible=false
+ menuOpen=false
+ local terminal=make('Frame',{
+  Name='KiraCMDEncerramento',AnchorPoint=Vector2.new(.5,.5),
+  Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(560,290),
+  BackgroundColor3=Color3.fromRGB(7,7,12),BorderSizePixel=0,ZIndex=100
+ },gui)
+ rounded(terminal,9)
+ make('UIStroke',{Color=Color3.fromRGB(175,65,255),Thickness=2},terminal)
+ local cab=text(terminal,'KIRA CMD  |  DESATIVANDO RECURSOS',15,UDim2.fromOffset(18,12),UDim2.new(1,-36,0,30))
+ cab.Font=Enum.Font.Code
+ cab.TextColor3=Color3.fromRGB(205,125,255)
+ cab.TextXAlignment=Enum.TextXAlignment.Left
+ cab.ZIndex=101
+ local saida=text(terminal,'',13,UDim2.fromOffset(18,53),UDim2.new(1,-36,1,-65))
+ saida.Font=Enum.Font.Code
+ saida.TextColor3=Color3.fromRGB(225,225,235)
+ saida.TextXAlignment=Enum.TextXAlignment.Left
+ saida.TextYAlignment=Enum.TextYAlignment.Top
+ saida.TextWrapped=false
+ saida.ZIndex=101
+ local etapas={
+  '[KIRA] Encerramento solicitado...',
+  '[ESP] Preparando remocao de marcacoes...',
+  '[COMBATE] Preparando desligamento...',
+  '[JOGADOR] Preparando restauracao de movimento...',
+  '[OVERLAY] Preparando desconexao de eventos...',
+  '[KIRA] Executando limpeza real agora...'
+ }
+ task.spawn(function()
+  for _,linha in ipairs(etapas) do
+   if not alive then return end
+   saida.Text=saida.Text..linha..'\n'
+   task.wait(.35)
+  end
+  if alive then
+   local ok,err=pcall(cleanup)
+   if not ok then
+    warn('[KIRA CMD] Falha ao encerrar: '..tostring(err))
+    if terminal.Parent then saida.Text=saida.Text..'[ERRO] '..tostring(err) end
+    encerrandoKira=false
+   end
+  end
+ end)
+end
 button(pages.Bypass,'ESCONDER KIRA MENU',function()
  menu.Visible=false
  menuOpen=false
@@ -3593,7 +3643,7 @@ local terminalLegacyButton=button(pages.Bypass,'EXECUTAR MODO TERMINAL',function
  end)
 end)
 terminalLegacyButton.Visible=false
-button(pages.Bypass,'Destruir painel e desligar recursos',function() cleanup() end)
+button(pages.Bypass,'Destruir painel e desligar recursos',destruirComTerminal)
 -- KIRA: ocultar extras que nao fazem parte da lista acordada.
 -- Sem apagar os sistemas base nem reconstruir toda a interface.
 do
@@ -3638,11 +3688,7 @@ slider(pages.Config,'Volume do painel (%)',0,100,uiSoundVolume,function(v)
  savePanelVolume()
 end)
 note(pages.Config,'Controle os sons de clique, ativacao e desativacao. Nao ha voz no painel.')
-button(pages.Config,'DESTRUIR PAINEL',function()
- if not alive then return end
- -- Fecha imediatamente, restaura modificacoes e desconecta eventos.
- cleanup()
-end)
+button(pages.Config,'DESTRUIR PAINEL',destruirComTerminal)
 note(pages.Config,'Preferencias locais quando o ambiente oferece arquivos. Sem conexao com site externo.')
 
 do -- Escopo dos ciclos de atualizacao
